@@ -1,0 +1,23 @@
+name: thestage_tts_front_stream
+description: "NeuTTS Streaming Demo (TheStage AI SDK, Android)"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  path_provider: ^2.1.5
+  thestage_android_sdk:
+    path: ../../plugin/thestage_android_sdk
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
