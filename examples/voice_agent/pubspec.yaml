@@ -1,0 +1,21 @@
+name: voice_agent
+description: "Voice Agent — TheStage AI SDK (native orchestration)"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  thestage_android_sdk:
+    path: ../../plugin/thestage_android_sdk
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

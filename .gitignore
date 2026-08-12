@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Secrets — never commit real API keys (copy secrets.example.json instead)
+secrets.json
+**/secrets.json
+
+# Android / Gradle build output
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+
+# Flutter / Dart build output
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/.symlinks/
+**/Flutter/ephemeral/

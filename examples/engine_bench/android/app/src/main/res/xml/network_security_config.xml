@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Scoped cleartext-HTTP exemption for the Brilliant LFM2
+  decoder server (port 9001). The rest of the app keeps
+  Android's default cleartextTrafficPermitted=false.
+  Remove this entry once the server stands up TLS.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">89.169.113.147</domain>
+    </domain-config>
+</network-security-config>

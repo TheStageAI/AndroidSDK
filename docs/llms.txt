@@ -1,0 +1,65 @@
+# TheStage Android SDK — agent index
+# On-device inference for Android on Qualcomm Snapdragon (QNN HTP NPU,
+# with GPU / CPU fallback). Source of truth for customer docs: docs/*.md
+
+## Init (required)
+- Kotlin: TheStageAI.registerContext(context); TheStageAI.initialize(api_token = "...")   // suspend
+- Flutter: TheStageFlutterSDK.initialize(api_token: '...')
+- Seat: (apiToken, deviceId) — see licensing.md / product_terms.md
+- Pricing: Service Request at https://app.thestage.ai/contact — no public rate card
+
+## Imports
+- Kotlin core: import ai.thestage.qlip.TheStageAI      // object (singleton)
+- Flutter: package:thestage_android_sdk/thestage_android_sdk.dart
+  → class TheStageFlutterSDK
+
+## Flutter surface (TheStageFlutterSDK, snake_case)
+- start_model / stop_model / infer / infer_stream
+- open_tts_streamer / send / finish_stream / stop_stream
+- prefetch_model / on_progress (single global load-progress stream)
+- ensureDeveloperLogs (mirrors SDK log ring into `flutter run` in debug)
+
+## Kotlin core symbols
+- TheStageAI (object): start_model, stop_model, infer, infer_stream,
+  open_tts_streamer, prefetch_model, recent_logs, set_log_listener,
+  record_log, record_error, last_error / last_error_code
+- TheStageLLM                          // Qwen3 / LFM2.5 chat
+- WhisperModel                         // ASR
+- TheStageVLM                          // VLM: image + prompt -> text (lfm2-vl)
+- NeuTTSMultilingual, NeuTTS           // TTS: 9-lang multilingual, English nano
+- SileroVAD                            // stateful VAD
+- TheStageVoiceAgent, TheStageAgentConfig   // full voice agent
+- SpeakerId                            // model_type "speaker-id" (redimnet2)
+- SamplingParams                       // per-call LLM sampling overrides
+
+## Pages
+- README.md — index, quick start, audio contract, model cache
+- llm.md — TheStageLLM chat + streaming + sampling (incl. min_new_tokens)
+- whisper.md — WhisperModel ASR
+- vlm.md — TheStageVLM (image + prompt -> text, LFM2.5-VL)
+- tts.md — NeuTTS + NeuTTSMultilingual
+- vad.md — SileroVAD
+- streaming.md — TTS / LLM stream contracts, back-pressure
+- voice_agent.md — full agent (VAD→STT→LLM→TTS, smart-turn, barge-in,
+  auto_listen / beginListening, sendRequest, custom nodes, device integrity)
+- model_management.md — availability, prefetch, load/unload, memory
+- ai_packs.md — ship models via Google Play AI packs (aipack:// engines source)
+- speaker_embedding.md — speaker-id enroll / cosine verify (CPU)
+- licensing.md — (apiToken, deviceId) seat, reinstall, online-validation behavior
+- product_terms.md — commercial terms summary (pricing = Service Request)
+- logging.md — diagnostics ring, session log file, `logs` EventChannel
+
+## Audio rates (PCM float, mono, samples in [-1, 1])
+- VAD / Whisper / speaker embedding input: 16 kHz mono Float
+- VAD frame: 512 samples (32 ms)
+- TTS output (NeuTTS / NeuTTSMultilingual): 24 kHz mono Float
+- Speaker embedding window: 2.0 s (32 000 samples), output 192-d L2-norm
+
+## Compute
+- Heavy graphs (Whisper encoder/decoder, TTS LLM) default to the
+  Snapdragon NPU (Hexagon HTP via QNN); GPU / CPU are fallbacks
+- Small stateful models (Silero VAD, smart-turn, speaker-id) run on ORT-CPU
+- Kotlin audio buffers: FloatArray; Flutter: Float32List (never Float64List)
+
+## Not published here
+- wake-word standalone guide

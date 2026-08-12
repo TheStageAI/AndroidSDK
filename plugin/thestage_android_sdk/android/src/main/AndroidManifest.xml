@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.thestage.thestage_android_sdk">
+    <!-- Needed so HF downloads can hold a partial
+         wake lock while the screen is off; without
+         it an in-flight qpkg stream gets killed when
+         the user locks the phone mid-download. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+</manifest>
