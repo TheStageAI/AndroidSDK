@@ -9,7 +9,7 @@ path.
 
 | | |
 |---|---|
-| **Version** | **`1.0.0`** — pin this tag (`ref: v1.0.0`); do not float |
+| **Version** | **`1.0.1`** — pin this tag (`ref: v1.0.1`); do not float |
 | **Platform** | Android, `minSdk 28`, `compileSdk 35`, **arm64-v8a** only |
 | **Backend** | Hexagon NPU (QNN / HTP) with automatic GPU / CPU fallback |
 | **Token** | one online check per process (cached in-memory); a fresh launch re-validates online |
@@ -47,13 +47,13 @@ path.
 - `docs/` — per-pipeline reference guides.
 - `scripts/setup.sh` — one-time host setup (AAR symlinks + secrets
   bootstrap for the Flutter examples).
-- `VERSION` — the SDK line this checkout ships (`1.0.0`).
+- `VERSION` — the SDK line this checkout ships (`1.0.1`).
 
 ---
 
 ## Capabilities & model fleet
 
-Everything below is the **`1.0.0`** fleet. Pass the HF id as
+Everything below is the **`1.0.1`** fleet. Pass the HF id as
 `engines_path`; the SDK downloads and caches it on first start.
 
 | Task | HF engines | `model_name` | Notes |
@@ -129,7 +129,7 @@ dependencies:
     git:
       url: https://github.com/TheStageAI/AndroidSDK.git
       path: plugin/thestage_android_sdk
-      ref: v1.0.0
+      ref: v1.0.1
 ```
 
 The plugin declares the prebuilt AARs `compileOnly`, so your **app
@@ -423,7 +423,7 @@ Both surfaces use the same `model_name` strings and the same
 | Duplicate `.so` at merge | ORT + core ship the same lib | Add the `jniLibs.pickFirsts` block above |
 | First infer very slow | HF download | Wait for `ready`; later runs use the cache |
 | Flutter audio glitches / NaNs | `Float64List` or wrong rate | Use `Float32List`; match the audio table above |
-| Flutter git dependency won't resolve | Floating ref | Pin `ref: v1.0.0` |
+| Flutter git dependency won't resolve | Floating ref | Pin `ref: v1.0.1` |
 
 ---
 
