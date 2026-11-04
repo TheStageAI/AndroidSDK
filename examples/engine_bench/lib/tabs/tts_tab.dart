@@ -5,24 +5,29 @@ import 'package:flutter/material.dart';
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 import '../backend/bench_session.dart';
+import '../backend/load_state.dart';
 import '../backend/sdk_host.dart';
 import '../widgets/bench_widgets.dart';
 
 // ----------------------------------------------------------------------
 // TtsTab — NeuTTS nano-multilingual streaming synth + benchmark
 // ----------------------------------------------------------------------
-// Android TTS = NeuTTS only (the iOS EngineBench's Qwen3-TTS row has no
-// Android counterpart, so it is dropped here). Synthesize streams audio
-// through the SDK's built-in player and reports first-chunk / RTF / tok/s;
-// Benchmark runs N silent synths and records the medians.
+// Synthesize streams audio through the SDK's audio player and reports
+// time-to-first-audio / RTF / tok/s; Benchmark runs N silent synths and
+// records the medians. The voice rides on each request, so switching
+// it needs no reload.
 const _ttsEnginesPath = String.fromEnvironment(
   'TTS_ENGINE_PATH',
   defaultValue: 'TheStageAI/neutts-nano-multilingual',
 );
 const _ttsRevision = String.fromEnvironment(
   'TTS_REVISION',
-  defaultValue: 'android',
+  defaultValue: '',
 );
+
+/// Shown before the model loads; the loaded bundle's own `voices`
+/// replace it.
+const _fallbackVoices = ['dave', 'bril', 'jo', 'paul'];
 
 class TtsTab extends StatefulWidget {
   const TtsTab({super.key});
@@ -32,45 +37,69 @@ class TtsTab extends StatefulWidget {
 }
 
 class _TtsTabState extends State<TtsTab> {
-  final _controller = TTSController(
-    modelName: 'bench_tts',
-    enginesPath: _ttsEnginesPath,
-    modelType: 'neutts',
-    revision: _ttsRevision,
-    availableVoices: const ['dave', 'bril', 'jo', 'paul'],
-    defaultVoice: 'dave',
-  );
+  static const _modelName = 'bench_tts';
+  static const _sampleRate = 24000;
 
+  final _player = TSAudioPlayer(sampleRate: _sampleRate);
   final _textCtl = TextEditingController(
     text: 'Hello! This is a test of the new text to speech model.',
   );
+
+  bool _loaded = false;
+  List<String> _voices = _fallbackVoices;
+  String _voice = _fallbackVoices.first;
   int _runs = 3;
   bool _running = false;
   String _status = 'tap Synthesize';
   String _statsLine = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _controller.addListener(_onUpdate);
-  }
+  String? _loadPhase;
+  double? _loadFraction;
+  StreamSubscription<Map<String, dynamic>>? _progressSub;
 
   @override
   void dispose() {
-    _controller.removeListener(_onUpdate);
-    _controller.dispose();
+    _progressSub?.cancel();
+    _player.stop();
     _textCtl.dispose();
+    if (_loaded) {
+      TheStageFlutterSDK.stop_model(model_name: _modelName)
+          .catchError((Object _) => <String, dynamic>{});
+    }
     super.dispose();
   }
 
-  void _onUpdate() {
-    if (mounted) setState(() {});
-  }
-
   Future<void> _ensureReady() async {
-    if (_controller.modelReady) return;
+    if (_loaded) return;
     await SdkHost.instance.ensureInitialized();
-    await _controller.initialize();
+    _progressSub = TheStageFlutterSDK.on_progress.listen((e) {
+      if (!mounted || !isProgressFor(e, _modelName)) return;
+      setState(() {
+        _loadPhase = e['phase'] as String?;
+        _loadFraction = (e['progress'] as num?)?.toDouble();
+      });
+    });
+    try {
+      final status = await TheStageFlutterSDK.start_model(
+        model_name: _modelName,
+        engines_path: _ttsEnginesPath,
+        model_type: 'neutts',
+        revision: _ttsRevision,
+        config: {'voice_id': _voice},
+      );
+      _loaded = true;
+      final voices =
+          voicesFromStatus(status, fallback: _fallbackVoices);
+      if (mounted) {
+        setState(() {
+          _voices = voices;
+          if (!voices.contains(_voice)) _voice = voices.first;
+        });
+      }
+    } finally {
+      await _progressSub?.cancel();
+      _progressSub = null;
+      if (mounted) setState(() => _loadPhase = null);
+    }
   }
 
   // --------------------------------------------------------------------
@@ -88,25 +117,47 @@ class _TtsTabState extends State<TtsTab> {
     try {
       await _ensureReady();
       setState(() => _status = 'synthesizing...');
-      await _controller.startStream(text);
-      // startStream returns once streaming begins; the controller's
-      // listener refreshes stats. Wait for it to finish before
-      // re-enabling the buttons.
-      while (_controller.generating) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (_player.isPlaying) await _player.stop();
+      await _player.start();
+      final sw = Stopwatch()..start();
+      double? firstAudioS;
+      var audioSeconds = 0.0;
+      var totalSeconds = 0.0;
+      var tps = 0.0;
+      final stream = TheStageFlutterSDK.infer_stream(
+        model_name: _modelName,
+        input_json: {'text': text, 'voice_id': _voice},
+      );
+      await for (final chunk in stream) {
+        final error = chunk['error'];
+        if (error != null) throw StateError('$error');
+        final audio = chunk['audio'] as Float32List?;
+        final sr = (chunk['sample_rate'] as num?)?.toInt() ?? _sampleRate;
+        if (audio != null && audio.isNotEmpty) {
+          firstAudioS ??= sw.elapsedMicroseconds / 1e6;
+          audioSeconds += audio.length / sr;
+          _player.enqueue(audio);
+        }
+        if (chunk['is_final'] == true) {
+          totalSeconds = (chunk['total_seconds'] as num?)?.toDouble() ?? 0;
+          tps = (chunk['tokens_per_second'] as num?)?.toDouble() ?? 0;
+        }
       }
-      final s = _controller.stats;
-      if (s != null) {
+      final rtf = totalSeconds > 0 ? audioSeconds / totalSeconds : 0.0;
+      if (mounted) {
         setState(() {
-          _statsLine = '${s.audioDuration.toStringAsFixed(2)}s audio - '
-              'TTFA ${((s.timeToFirstAudio ?? 0) * 1000).toStringAsFixed(0)} ms - '
-              'rtf ${(s.rtf ?? 0).toStringAsFixed(2)} - '
-              '${(s.tokensPerSecond ?? 0).toStringAsFixed(1)} tok/s';
+          _statsLine = '${audioSeconds.toStringAsFixed(2)}s audio - '
+              'TTFA ${((firstAudioS ?? 0) * 1000).toStringAsFixed(0)} ms - '
+              'rtf ${rtf.toStringAsFixed(2)} - '
+              '${tps.toStringAsFixed(1)} tok/s';
+          _status = 'playing...';
         });
       }
-      setState(() => _status = 'done');
+      // Keep the buttons disabled until the audio has played out.
+      await _player.drain();
+      if (mounted) setState(() => _status = 'done');
     } catch (e) {
-      setState(() => _status = 'error: $e');
+      if (mounted) setState(() => _status = 'error: $e');
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -117,8 +168,8 @@ class _TtsTabState extends State<TtsTab> {
   // --------------------------------------------------------------------
   Future<Map<String, double>> _runSilent(String text) async {
     final stream = TheStageFlutterSDK.infer_stream(
-      model_name: 'bench_tts',
-      input_json: {'text': text},
+      model_name: _modelName,
+      input_json: {'text': text, 'voice_id': _voice},
     );
     var audioSeconds = 0.0;
     var totalSeconds = 0.0;
@@ -163,7 +214,7 @@ class _TtsTabState extends State<TtsTab> {
       BenchSession.instance.add(BenchRecord(
         kind: 'tts',
         model: 'NeuTTS nano multilingual',
-        voice: _controller.selectedVoice,
+        voice: _voice,
         runs: n,
         prompt: text,
         metrics: {
@@ -191,7 +242,6 @@ class _TtsTabState extends State<TtsTab> {
   // --------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final ready = _controller.modelReady;
     return BenchScaffold(
       title: 'TTS bench',
       children: [
@@ -200,11 +250,11 @@ class _TtsTabState extends State<TtsTab> {
           const SizedBox(width: 12),
           Expanded(
             child: ModelChips<String>(
-              models: _controller.availableVoices,
-              selected: _controller.selectedVoice,
+              models: _voices,
+              selected: _voice,
               label: (v) => v,
-              enabled: ready && !_running,
-              onSelected: (v) => _controller.switchVoice(v),
+              enabled: !_running,
+              onSelected: (v) => setState(() => _voice = v),
             ),
           ),
         ]),
@@ -229,11 +279,8 @@ class _TtsTabState extends State<TtsTab> {
           enabled: !_running,
           onChanged: (v) => setState(() => _runs = v),
         ),
-        if (!ready && _controller.loadPhase != null)
-          LoadProgress(
-            phase: _controller.loadPhase!,
-            fraction: _controller.downloadProgress,
-          ),
+        if (_loadPhase != null)
+          LoadProgress(phase: _loadPhase!, fraction: _loadFraction),
         const SizedBox(height: 12),
         ActionRow(
           running: _running,

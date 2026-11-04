@@ -18,7 +18,9 @@ class ModelSlot {
     required this.enginesPath,
     required this.modelType,
     this.policy = ModelPolicy.resident,
-    this.device = 'npu',
+    // Empty takes the best bundle for this phone; 'npu' / 'cpu'
+    // constrain it.
+    this.device = '',
     this.revision = '',
   });
 
@@ -42,15 +44,15 @@ abstract class ModelRosterBackend {
     required String modelName,
     required String enginesPath,
     required String modelType,
-    String device = 'npu',
+    String device = '',
     String revision = '',
   });
 
   Future<void> stopModel({required String modelName});
 }
 
-/// Real-SDK backend. Adapts the [ModelRoster] contract onto the Android
-/// Dart API: `prefetch_model` / `start_model` / `stop_model`.
+/// Real-SDK backend. Adapts the [ModelRoster] contract onto the SDK's
+/// `prefetch_model` / `start_model` / `stop_model`.
 class SdkModelRosterBackend implements ModelRosterBackend {
   @override
   Future<String> prefetchEngines({
@@ -58,7 +60,7 @@ class SdkModelRosterBackend implements ModelRosterBackend {
     String? modelType,
     String revision = '',
   }) {
-    // Android exposes `prefetch_model` (download + extract, no load).
+    // `prefetch_model`: download + extract, no load.
     return TheStageFlutterSDK.prefetch_model(
       repo_id: repoId,
       model_type: modelType,
@@ -71,7 +73,7 @@ class SdkModelRosterBackend implements ModelRosterBackend {
     required String modelName,
     required String enginesPath,
     required String modelType,
-    String device = 'npu',
+    String device = '',
     String revision = '',
   }) async {
     await TheStageFlutterSDK.start_model(
@@ -91,10 +93,10 @@ class SdkModelRosterBackend implements ModelRosterBackend {
 
 /// Sequences warm → hot without inventing a second model manager.
 ///
-/// On Android the voice agent owns its VAD / STT / TTS internally, so the
-/// roster here is used mainly to run the ephemeral VLM burst (start →
-/// caption → stop). The resident / warmDisk slots are kept for API parity
-/// and for hosts that drive an on-device LLM through the roster.
+/// The voice agent owns its VAD / STT / TTS internally, so the roster
+/// here runs the ephemeral VLM burst (start → caption → stop). The
+/// resident / warmDisk policies are there for hosts that also drive
+/// other models (an on-device LLM, say) through the roster.
 class ModelRoster {
   ModelRoster(
     this.slots, {

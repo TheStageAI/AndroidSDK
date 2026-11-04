@@ -10,7 +10,7 @@ class SettingsScreen extends StatefulWidget {
     required this.agent,
   });
   final VoiceAgentSettings settings;
-  final TheStageVoiceAgentFlutter agent;
+  final TSVoiceAgent agent;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -28,49 +28,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     s.removeListener(_refresh);
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
   void _refresh() => setState(() {});
 
+  // The interrupt knobs also hot-apply to a running agent. The new
+  // value is saved either way (it applies at the next Start); tell the
+  // user when the live update did not go through.
+  Future<void> _hotUpdate(Future<void> Function() call) async {
+    if (widget.agent.state == TSAgentState.idle) return;
+    try {
+      await call();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text('Not applied live ($e). It applies at the next '
+              'Start.'),
+        ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        children: [
-          _sectionHeader('On-device models'),
-          _note(
-            s.useLocalBundles
-                ? 'BundledModels stack — restart the agent after changing models.'
-                : 'HuggingFace repos — revision from SDK ModelRevisionMap. '
-                    'Restart the agent after changing models.',
-          ),
-          if (s.useLocalBundles) ...[
-            _modelDropdown(
-              'LLM',
-              s.localLlmBundle,
-              VoiceAgentSettings.availableLocalLlms,
-              (v) => s.update((s) => s.localLlmBundle = v),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          children: [
+            _sectionHeader('On-device models'),
+            _note(
+              'Hugging Face repos — the SDK resolves each one to its '
+              'pinned revision and the best bundle for this phone. '
+              'Restart the agent after changing models.',
             ),
-            _modelDropdown(
-              'ASR',
-              s.localSttBundle,
-              VoiceAgentSettings.availableLocalAsr,
-              (v) => s.update((s) => s.localSttBundle = v),
-            ),
-            _modelDropdown(
-              'TTS',
-              s.localTtsBundle,
-              VoiceAgentSettings.availableLocalTts,
-              (v) => s.update((s) => s.selectLocalTtsBundle(v)),
-            ),
-            _readonly(
-              'VAD / turn',
-              '${s.localVadBundle}  +  ${s.localTurnBundle}',
-            ),
-          ] else ...[
             if (s.llmProvider == 'local')
               _modelDropdown(
                 'LLM',
@@ -94,257 +92,245 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _readonly(
               'VAD / turn',
-              'TheStageAI/silero-vad + TheStageAI/smart-turn-v3',
+              'TheStageAI/silero-vad + ${s.turnDetectorRepo}',
             ),
-          ],
 
-          _sectionHeader('Voice & Language'),
-          _dropdown('TTS Voice', s.ttsVoice, s.voicesForSelectedTts, (v) {
-            s.update((s) => s.ttsVoice = v);
-          }),
-          _dropdown('STT Language', s.sttLanguage,
-              VoiceAgentSettings.availableLanguages, (v) {
-            s.update((s) => s.sttLanguage = v);
-          }),
-          _textField('System Prompt', s.systemPrompt, (v) {
-            s.update((s) => s.systemPrompt = v);
-          }, maxLines: 3),
-          _slider('Chat memory (turns)', s.chatMemoryMaxTurns.toDouble(), 2, 30,
-              (v) {
-            s.update((s) => s.chatMemoryMaxTurns = v.round());
-          }),
-          _note(
-            'Keeps the last N user+assistant turns. System prompt is prepended '
-            'every call (not trimmed). Local sampling comes from the LLM bundle '
-            'generation config, not the cloud sliders below.',
-          ),
+            _sectionHeader('Voice & Language'),
+            _dropdown('TTS Voice', s.ttsVoice, s.voices, (v) {
+              s.update((s) => s.ttsVoice = v);
+            }),
+            _dropdown('STT Language', s.sttLanguage,
+                VoiceAgentSettings.availableLanguages, (v) {
+              s.update((s) => s.sttLanguage = v);
+            }),
+            _textField('System Prompt', s.systemPrompt, (v) {
+              s.update((s) => s.systemPrompt = v);
+            }, maxLines: 3),
 
-          _sectionHeader('LLM Provider'),
-          _dropdown('Provider', s.llmProvider, const ['local', 'openai_compatible'],
-              (v) {
-            // On-device (local) LLM is not available on Android yet — ignore a
-            // 'local' pick so the agent stays on the working remote path.
-            if (v == 'local' && !VoiceAgentSettings.localLlmAvailable) return;
-            s.update((s) {
-              s.llmProvider = v;
-              if (v == 'local') {
-                s.llmModel = s.useLocalBundles
-                    ? VoiceAgentSettings.localLlmHandle
-                    : (VoiceAgentSettings.availableHfLlms.contains(s.llmModel)
-                        ? s.llmModel
-                        : VoiceAgentSettings.hfLlmRepo);
-              }
-            });
-          }),
-          _note('On-device (local) LLM — not available on Android yet.'),
-          if (s.llmProvider == 'local') ...[
-            _note(
-              s.useLocalBundles
-                  ? 'On-device: ${s.localLlmBundle} (handle `${VoiceAgentSettings.localLlmHandle}`). '
-                      'Sampling from model_spec.arch.decoder.generation.'
-                  : 'On-device from HF: ${s.llmModel} '
-                      '(revision via ModelRevisionMap). '
-                      'Sampling from the LLM bundle generation config.',
-            ),
-          ] else ...[
-            _textField('Model', s.llmModel, (v) {
-              s.update((s) => s.llmModel = v);
+            _sectionHeader('LLM Provider'),
+            _dropdown('Provider', s.llmProvider,
+                const ['local', 'openai_compatible'], (v) {
+              s.update((s) => s.selectProvider(v));
             }),
-            _textField('Endpoint', s.llmEndpoint, (v) {
-              s.update((s) => s.llmEndpoint = v);
-            }),
+            if (s.llmProvider == 'local') ...[
+              _dropdown('Tools', s.llmTools,
+                  VoiceAgentSettings.availableLlmTools, (v) {
+                s.update((s) => s.llmTools = v);
+              }),
+              _note(
+                'web: weather, time, search (city names and queries go '
+                'to Open-Meteo, DuckDuckGo and Wikipedia). voice: web + '
+                'Wikipedia, calculator and phone actions, which open '
+                'other apps for you to confirm.',
+              ),
+              _note(
+                'On-device from HF: ${s.llmModel} (the SDK\'s pinned '
+                'revision). The on-device models decode greedily.',
+              ),
+            ] else ...[
+              _textField('Model', s.llmModel, (v) {
+                s.update((s) => s.llmModel = v);
+              }),
+              _textField('Endpoint', s.llmEndpoint, (v) {
+                s.update((s) => s.llmEndpoint = v);
+              }),
+              _slider('Temperature', s.temperature, 0.0, 1.5, (v) {
+                s.update((s) => s.temperature = v);
+              }, decimals: 2),
+            ],
             _slider('Max Tokens', s.maxTokens.toDouble(), 64, 1024, (v) {
               s.update((s) => s.maxTokens = v.round());
             }),
-            _slider('Temperature', s.temperature, 0.0, 1.5, (v) {
-              s.update((s) => s.temperature = v);
+
+            _sectionHeader('Endpointing'),
+            // Capture (endpointing) threshold. Applied at agent start.
+            _slider('VAD Threshold (capture)', s.vadThreshold, 0.3, 0.8, (v) {
+              s.update((s) => s.vadThreshold = v);
             }, decimals: 2),
-          ],
-
-          _sectionHeader('Endpointing'),
-          // Capture (endpointing) threshold. Applied at agent start.
-          _slider('VAD Threshold (capture)', s.vadThreshold, 0.3, 0.8, (v) {
-            s.update((s) => s.vadThreshold = v);
-          }, decimals: 2),
-          _slider('VAD Onset (ms)', s.vadOnsetMs.toDouble(), 32, 320, (v) {
-            s.update((s) => s.vadOnsetMs = v.round());
-          }),
-          _slider('Max Turn Length (ms)', s.maxAccumulationMs.toDouble(), 5000,
-              60000, (v) {
-            s.update((s) => s.maxAccumulationMs = v.round());
-          }),
-          // Only used by the VAD endpointer (DNN owns end-of-turn otherwise).
-          if (!s.useDnnTurn)
-            _slider('Silence Timeout (ms)', s.silenceTimeoutMs.toDouble(), 300,
-                2000, (v) {
-              s.update((s) => s.silenceTimeoutMs = v.round());
+            _slider('VAD Onset (ms)', s.vadOnsetMs.toDouble(), 32, 320, (v) {
+              s.update((s) => s.vadOnsetMs = v.round());
             }),
-
-          _sectionHeader('Turn Detection (end-of-turn)'),
-          _toggle('DNN smart-turn (off = VAD silence)', s.useDnnTurn, (v) {
-            s.update((s) => s.useDnnTurn = v);
-          }),
-          if (s.useDnnTurn) ...[
-            _note('DNN turn knobs apply on next Start.'),
-            _slider('EOT Threshold', s.turnEotThreshold, 0.3, 0.9, (v) {
-              s.update((s) => s.turnEotThreshold = v);
-            }, decimals: 2),
-            _slider('EOT Confirm Count', s.turnEotConfirmCount.toDouble(), 1, 4,
-                (v) {
-              s.update((s) => s.turnEotConfirmCount = v.round());
+            _slider('Max Turn Length (ms)', s.maxAccumulationMs.toDouble(), 5000,
+                60000, (v) {
+              s.update((s) => s.maxAccumulationMs = v.round());
             }),
-            _note('Consecutive positive verdicts before ending the turn. '
-                'Higher = fewer premature cut-offs, slightly more latency.'),
-            _slider('EOT High-Confidence', s.turnEotHighConfidence, 0.6, 1.0,
-                (v) {
-              s.update((s) => s.turnEotHighConfidence = v);
-            }, decimals: 2),
-            _note('A verdict at/above this commits immediately, skipping '
-                'confirmation. 1.0 = always confirm.'),
-            _slider('Pause Trigger (ms)', s.turnPauseTriggerMs.toDouble(), 96,
-                1000, (v) {
-              s.update((s) => s.turnPauseTriggerMs = v.round());
+            // Only used by the VAD endpointer (DNN owns end-of-turn otherwise).
+            if (!s.useDnnTurn)
+              _slider('Silence Timeout (ms)', s.silenceTimeoutMs.toDouble(), 300,
+                  2000, (v) {
+                s.update((s) => s.silenceTimeoutMs = v.round());
+              }),
+  
+            _sectionHeader('Turn Detection (end-of-turn)'),
+            _toggle('DNN smart-turn (off = VAD silence)', s.useDnnTurn, (v) {
+              s.update((s) => s.useDnnTurn = v);
             }),
-            _slider('Re-eval Interval (ms, 0=off)',
-                s.turnReevalIntervalMs.toDouble(), 0, 1000, (v) {
-              s.update((s) => s.turnReevalIntervalMs = v.round());
+            if (s.useDnnTurn) ...[
+              _note('DNN turn knobs apply on next Start.'),
+              _slider('EOT Threshold', s.turnEotThreshold, 0.3, 0.9, (v) {
+                s.update((s) => s.turnEotThreshold = v);
+              }, decimals: 2),
+              _slider('EOT Confirm Count', s.turnEotConfirmCount.toDouble(), 1, 4,
+                  (v) {
+                s.update((s) => s.turnEotConfirmCount = v.round());
+              }),
+              _note('Consecutive positive verdicts before ending the turn. '
+                  'Higher = fewer premature cut-offs, slightly more latency.'),
+              _slider('EOT High-Confidence', s.turnEotHighConfidence, 0.6, 1.0,
+                  (v) {
+                s.update((s) => s.turnEotHighConfidence = v);
+              }, decimals: 2),
+              _note('A verdict at/above this commits immediately, skipping '
+                  'confirmation. 1.0 = always confirm.'),
+              _slider('Pause Trigger (ms)', s.turnPauseTriggerMs.toDouble(), 96,
+                  1000, (v) {
+                s.update((s) => s.turnPauseTriggerMs = v.round());
+              }),
+              _slider('Re-eval Interval (ms, 0=off)',
+                  s.turnReevalIntervalMs.toDouble(), 0, 1000, (v) {
+                s.update((s) => s.turnReevalIntervalMs = v.round());
+              }),
+              _slider('Max Silence Fallback (ms)',
+                  s.turnMaxSilenceMs.toDouble(), 1000, 7000, (v) {
+                s.update((s) => s.turnMaxSilenceMs = v.round());
+              }),
+              _slider('Model Window (ms)', s.turnWindowMs.toDouble(), 4000, 8000,
+                  (v) {
+                s.update((s) => s.turnWindowMs = v.round());
+              }),
+              _slider('Min Speech (ms)', s.turnMinSpeechMs.toDouble(), 0, 500,
+                  (v) {
+                s.update((s) => s.turnMinSpeechMs = v.round());
+              }),
+              _slider('ASR Silence Hangover (ms)',
+                  s.turnAsrSilenceHangoverMs.toDouble(), 0, 800, (v) {
+                s.update((s) => s.turnAsrSilenceHangoverMs = v.round());
+              }),
+            ],
+  
+            _sectionHeader('Streaming ASR'),
+            _toggle('Live caption partials', s.asrStreaming, (v) {
+              s.update((s) => s.asrStreaming = v);
             }),
-            _slider('Max Silence Fallback (ms)',
-                s.turnMaxSilenceMs.toDouble(), 1000, 7000, (v) {
-              s.update((s) => s.turnMaxSilenceMs = v.round());
+            if (s.asrStreaming)
+              _slider('Partial Interval (ms)',
+                  s.asrPartialIntervalMs.toDouble(), 200, 1500, (v) {
+                s.update((s) => s.asrPartialIntervalMs = v.round());
+              }),
+            _toggle('Speculative Whisper', s.speculativeWhisper, (v) {
+              s.update((s) => s.speculativeWhisper = v);
             }),
-            _slider('Model Window (ms)', s.turnWindowMs.toDouble(), 4000, 8000,
-                (v) {
-              s.update((s) => s.turnWindowMs = v.round());
+  
+            _sectionHeader('Diagnostics'),
+            _toggle('Debug timeline log', s.debugTimeline, (v) {
+              s.update((s) => s.debugTimeline = v);
             }),
-            _slider('Min Speech (ms)', s.turnMinSpeechMs.toDouble(), 0, 500,
-                (v) {
-              s.update((s) => s.turnMinSpeechMs = v.round());
-            }),
-            _slider('ASR Silence Hangover (ms)',
-                s.turnAsrSilenceHangoverMs.toDouble(), 0, 800, (v) {
-              s.update((s) => s.turnAsrSilenceHangoverMs = v.round());
-            }),
-          ],
-
-          _sectionHeader('Streaming ASR'),
-          _toggle('Live caption partials', s.asrStreaming, (v) {
-            s.update((s) => s.asrStreaming = v);
-          }),
-          if (s.asrStreaming)
-            _slider('Partial Interval (ms)',
-                s.asrPartialIntervalMs.toDouble(), 200, 1500, (v) {
-              s.update((s) => s.asrPartialIntervalMs = v.round());
-            }),
-
-          _sectionHeader('Diagnostics'),
-          _toggle('Debug timeline log', s.debugTimeline, (v) {
-            s.update((s) => s.debugTimeline = v);
-          }),
-          _note(
-            'Emits a single cross-node event timeline. Stream on a Mac:\n'
-            'log stream --info --predicate \'subsystem == "TheStageAI" '
-            'AND category == "Timeline"\'',
-          ),
-
-          _sectionHeader('Wake Word'),
-          _toggle('Wake Word Enabled', s.wakeWordEnabled, (v) {
-            s.update((s) => s.wakeWordEnabled = v);
-          }),
-          if (s.wakeWordEnabled) ...[
-            _slider('WW Threshold', s.wwThreshold, 0.5, 0.9, (v) {
-              s.update((s) => s.wwThreshold = v);
-            }, decimals: 2),
+            _note(
+              'Logs a single cross-node event timeline. Read it with:\n'
+              'adb logcat -s Timeline:I',
+            ),
+  
+            _sectionHeader('Wake Word'),
+            // Shown but blocked: a wake word recognises one specific phrase,
+            // so this example ships without a model and the agent listens
+            // continuously. The controls stay visible so the settings a wake
+            // word would use are still discoverable.
+            _note(
+              'This example ships no wake-word model, so these are '
+              'disabled and the agent listens continuously.',
+            ),
+            _toggle('Wake Word Enabled', s.wakeWordEnabled, (_) {},
+                enabled: false),
+            _slider('WW Threshold', s.wwThreshold, 0.5, 0.9, (_) {},
+                decimals: 2, enabled: false),
             _slider('Conversation Timeout (s)',
-                s.conversationTimeoutSec.toDouble(), 0, 120, (v) {
-              s.update((s) => s.conversationTimeoutSec = v.round());
+                s.conversationTimeoutSec.toDouble(), 0, 120, (_) {},
+                enabled: false),
+  
+            _sectionHeader('Interruption'),
+            _toggle('Allow Interruptions', s.allowInterruptions, (v) {
+              s.update((s) => s.allowInterruptions = v);
             }),
+            if (s.allowInterruptions) ...[
+              // `wake_word` is also a valid interrupt mode, but it needs a
+              // wake-word model to confirm the barge-in, so it is not offered
+              // here -- see the Wake Word section.
+              _dropdown('Interrupt Mode', s.interruptMode, ['speech_only'], (v) {
+                s.update((s) => s.interruptMode = v);
+                _hotUpdate(
+                  () => widget.agent.update_interrupt_config(interrupt_mode: v),
+                );
+              }),
+              _slider('Min Speech to Interrupt (ms)',
+                  s.interruptMinSpeechMs.toDouble(), 100, 1500, (v) {
+                final ms = v.round();
+                s.update((s) => s.interruptMinSpeechMs = ms);
+                _hotUpdate(
+                  () => widget.agent
+                      .update_interrupt_config(interrupt_min_speech_ms: ms),
+                );
+              }),
+              // Sustained positive-VAD time (ms) to fire a barge-in. 0 = use
+              // the min-speech value above. Higher + a high interrupt
+              // threshold rejects noise so the agent won't self-interrupt.
+              _slider('Interrupt Onset (ms, 0=use min speech)',
+                  s.interruptOnsetMs.toDouble(), 0, 640, (v) {
+                final ms = v.round();
+                s.update((s) => s.interruptOnsetMs = ms);
+                _hotUpdate(
+                  () => widget.agent
+                      .update_interrupt_config(interrupt_onset_ms: ms),
+                );
+              }),
+              // Strict barge-in threshold, separate from the capture threshold.
+              _slider('Interrupt Threshold', s.interruptThreshold, 0.5, 0.96, (v) {
+                s.update((s) => s.interruptThreshold = v);
+                _hotUpdate(
+                  () => widget.agent
+                      .update_interrupt_config(interrupt_threshold: v),
+                );
+              }, decimals: 2),
+              _note('Lockouts below apply on next Start.'),
+              // Per-message grace at TTS start so AEC can re-converge.
+              _slider('Playback Lockout (ms)',
+                  s.interruptMinPlaybackMs.toDouble(), 0, 1000, (v) {
+                s.update((s) => s.interruptMinPlaybackMs = v.round());
+              }),
+              // One-time longer lockout on the FIRST reply (AEC cold start).
+              // Raise this if the agent self-interrupts right after (re)starting.
+              _slider('Initial Lockout (ms, 1st reply)',
+                  s.interruptInitialLockoutMs.toDouble(), 0, 3000, (v) {
+                s.update((s) => s.interruptInitialLockoutMs = v.round());
+              }),
+              // Lockout while thinking (post end-of-turn, pre-TTS).
+              _slider('Thinking Lockout (ms)',
+                  s.interruptThinkingLockoutMs.toDouble(), 0, 2000, (v) {
+                s.update((s) => s.interruptThinkingLockoutMs = v.round());
+              }),
+            ],
+  
+            _sectionHeader('Audio'),
+            _slider('Pre-roll (ms)', s.preRollMs.toDouble(), 0, 500, (v) {
+              s.update((s) => s.preRollMs = v.round());
+            }),
+            _toggle('AEC Enabled', s.aecEnabled, (v) {
+              s.update((s) => s.aecEnabled = v);
+            }),
+            if (s.aecEnabled) ...[
+              // Silence played at start so the echo canceller has a reference
+              // before the first TTS. Raise for more cold-start margin.
+              _slider('AEC Warmup (ms)', s.aecWarmupMs.toDouble(), 0, 1000, (v) {
+                s.update((s) => s.aecWarmupMs = v.round());
+              }),
+              _slider('Playback Gate Tail (ms)',
+                  s.aecPlaybackGateTailMs.toDouble(), 0, 500, (v) {
+                s.update((s) => s.aecPlaybackGateTailMs = v.round());
+              }),
+            ],
+  
+            const SizedBox(height: 32),
           ],
-
-          _sectionHeader('Interruption'),
-          _toggle('Allow Interruptions', s.allowInterruptions, (v) {
-            s.update((s) => s.allowInterruptions = v);
-          }),
-          if (s.allowInterruptions) ...[
-            _dropdown(
-                'Interrupt Mode', s.interruptMode, ['speech_only', 'wake_word'],
-                (v) {
-              s.update((s) => s.interruptMode = v);
-              widget.agent.updateInterruptConfig(interruptMode: v);
-            }),
-            _slider('Min Speech to Interrupt (ms)',
-                s.interruptMinSpeechMs.toDouble(), 100, 1500, (v) {
-              final ms = v.round();
-              s.update((s) => s.interruptMinSpeechMs = ms);
-              widget.agent
-                  .updateInterruptConfig(interruptMinSpeechMs: ms);
-            }),
-            // Number of consecutive positive VAD frames (~32 ms each) to fire
-            // a barge-in. 0 = use the ms value above. Higher + a high
-            // interrupt threshold rejects noise so the agent won't
-            // self-interrupt.
-            _slider('Interrupt Onset (ms, 0=use min speech)',
-                s.interruptOnsetMs.toDouble(), 0, 640, (v) {
-              final ms = v.round();
-              s.update((s) => s.interruptOnsetMs = ms);
-              widget.agent.updateInterruptConfig(interruptOnsetMs: ms);
-            }),
-            // Strict barge-in threshold, separate from the capture threshold.
-            _slider('Interrupt Threshold', s.interruptThreshold, 0.5, 0.96, (v) {
-              s.update((s) => s.interruptThreshold = v);
-              widget.agent.updateInterruptConfig(interruptThreshold: v);
-            }, decimals: 2),
-            _note('Lockouts below apply on next Start.'),
-            // Per-message grace at TTS start so AEC can re-converge.
-            _slider('Playback Lockout (ms)',
-                s.interruptMinPlaybackMs.toDouble(), 0, 1000, (v) {
-              s.update((s) => s.interruptMinPlaybackMs = v.round());
-            }),
-            // One-time longer lockout on the FIRST reply (VPIO cold start).
-            // Raise this if the agent self-interrupts right after (re)starting.
-            _slider('Initial Lockout (ms, 1st reply)',
-                s.interruptInitialLockoutMs.toDouble(), 0, 3000, (v) {
-              s.update((s) => s.interruptInitialLockoutMs = v.round());
-            }),
-            // Lockout while thinking (post end-of-turn, pre-TTS).
-            _slider('Thinking Lockout (ms)',
-                s.interruptThinkingLockoutMs.toDouble(), 0, 2000, (v) {
-              s.update((s) => s.interruptThinkingLockoutMs = v.round());
-            }),
-          ],
-
-          _sectionHeader('Audio'),
-          _slider('Pre-roll (ms)', s.preRollMs.toDouble(), 0, 500, (v) {
-            s.update((s) => s.preRollMs = v.round());
-          }),
-          _toggle('AEC Enabled', s.aecEnabled, (v) {
-            s.update((s) => s.aecEnabled = v);
-          }),
-          if (s.aecEnabled) ...[
-            // Silence pumped to the speaker at start so VPIO has echo reference
-            // before the first TTS. Raise for more cold-start margin.
-            _slider('AEC Warmup (ms)', s.aecWarmupMs.toDouble(), 0, 1000, (v) {
-              s.update((s) => s.aecWarmupMs = v.round());
-            }),
-            _slider('Playback Gate Tail (ms)',
-                s.aecPlaybackGateTailMs.toDouble(), 0, 500, (v) {
-              s.update((s) => s.aecPlaybackGateTailMs = v.round());
-            }),
-          ],
-
-          _sectionHeader('Debug'),
-          _toggle('Show Metrics', s.showMetrics, (v) {
-            s.update((s) => s.showMetrics = v);
-          }),
-          _toggle('Show Partial Transcript', s.showPartialTranscript, (v) {
-            s.update((s) => s.showPartialTranscript = v);
-          }),
-          _toggle('Speculative Whisper', s.speculativeWhisper, (v) {
-            s.update((s) => s.speculativeWhisper = v);
-          }),
-
-          const SizedBox(height: 32),
-        ],
+        ),
       ),
     );
   }
@@ -448,7 +434,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _slider(String label, double value, double min, double max,
       ValueChanged<double> onChanged,
-      {int decimals = 0}) {
+      {int decimals = 0, bool enabled = true}) {
     final displayValue = decimals > 0
         ? value.toStringAsFixed(decimals)
         : value.round().toString();
@@ -468,7 +454,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: value.clamp(min, max),
             min: min,
             max: max,
-            onChanged: onChanged,
+            // A null callback is how a Slider renders disabled.
+            onChanged: enabled ? onChanged : null,
           ),
         ],
       ),
@@ -519,22 +506,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _toggle(String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _toggle(String label, bool value, ValueChanged<bool> onChanged,
+      {bool enabled = true}) {
     return SwitchListTile(
       title: Text(label),
       value: value,
-      onChanged: onChanged,
+      // A null callback is how a SwitchListTile renders disabled.
+      onChanged: enabled ? onChanged : null,
       contentPadding: EdgeInsets.zero,
     );
   }
 
+  // One controller per field, kept across rebuilds: a new one on
+  // every build resets the cursor while the user types.
+  final Map<String, TextEditingController> _controllers = {};
+
   Widget _textField(
       String label, String value, ValueChanged<String> onChanged,
       {int maxLines = 1}) {
+    final controller = _controllers.putIfAbsent(
+        label, () => TextEditingController(text: value));
+    // The value changed elsewhere (e.g. a provider switch).
+    if (controller.text != value) controller.text = value;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: TextField(
-        controller: TextEditingController(text: value),
+        controller: controller,
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),

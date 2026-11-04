@@ -1,8 +1,11 @@
 # Whisper ASR (Speech-to-Text)
 
-On-device speech recognition using Whisper. The ASR pipeline handles
-mel-spectrogram, encoder and decoder, with automatic VAD chunking and
-long-audio stitching.
+On-device speech recognition using Whisper (large-v3-turbo). The ASR
+pipeline handles mel-spectrogram, encoder and decoder, with automatic
+VAD chunking and long-audio stitching. The encoder and decoder run on
+the Hexagon NPU through TheStage's own NPU runtime: about 0.1 s of
+encoder time per 10 s window and about 2 ms per decoded token on a
+Snapdragon 8 Elite.
 
 Flutter consumers go through the singleton `start_model` + `infer`
 JSON path — there is no direct pipeline constructor on Dart. Both
@@ -82,8 +85,8 @@ print(result[0]['transcription']);
 |---|---|---|
 | input  `audio` | `FloatArray` | 16 kHz mono PCM, samples in `[-1.0, 1.0]`, any length. |
 | input  `language` | `String` (default `"en"`) | Whisper language code: `en`, `fr`, `de`, `es`, `pt`, `ja`, `ko`, `zh`, `ar`, `hi`, `ru`, … |
-| input  `config.max_new_tokens` | `Int?` | Cap per-window decode. |
-| input  `config.return_tokens` | `Boolean` (default `false`) | **Direct Kotlin API only** — include token IDs in `ASRResult.tokens`. Not honored on the singleton / JSON path. |
+| input  `max_new_tokens` | `Int?` | Cap per-window decode (`ASRConfig.max_new_tokens` on the direct pipeline). |
+| input  `ASRConfig.return_tokens` | `Boolean` (default `false`) | **Direct Kotlin API only** — include token IDs in `ASRResult.tokens`. Not honored on the singleton / JSON path. |
 | output `ASRResult.text` | `String` | Transcribed text. |
 | output `ASRResult.token_count` | `Int` | Total decoded tokens (sum across windows). |
 | output `ASRResult.decode_seconds` | `Double` | Decoder wall time. |
@@ -97,10 +100,9 @@ print(result[0]['transcription']);
 ## Audio I/O
 
 - 16 kHz mono `FloatArray`, samples normalized to `[-1.0, 1.0]`.
-- Long buffers are split internally into the bundle's `chunk_seconds`
-  windows. The shipped bundle sets its transcription window (see the
-  bundle's `encoder_spec.json`); the SDK default is **30 s**, and other
-  window sizes (10 / 15 / 30 s exports) work the same way.
+- Long buffers are split internally into the bundle's transcription
+  windows: **10 s** for the shipped bundle (set in its
+  `encoder_spec.json`).
 - Overlap between windows is configurable via the `overlap_seconds`
   constructor argument (default `0`). Useful on streaming captures to
   avoid losing words straddling a chunk boundary.
@@ -112,16 +114,23 @@ shared format used across VAD / ASR / TTS.
 
 ## Streaming (live transcription)
 
-Live, push-based transcription — feed mic audio as it arrives and read
-stable, monotonically-growing partials — is available on Android
-through the **Voice Agent** ([voice_agent.md](./voice_agent.md)), which
-runs streaming ASR internally: it re-decodes the growing turn buffer on
-a single serial worker and commits stable text via LocalAgreement, so
-captions never flicker or retract, and the authoritative end-of-turn
-transcript always covers the complete utterance (including the last
-word). There is no standalone streaming-ASR entry point on the direct
-pipeline; use the batch `infer` above for one-shot transcription and
-the Voice Agent for real-time captioning.
+Push mic audio in as it arrives and read stable, monotonically-growing
+partials back: the SDK re-decodes the growing buffer on a single
+serial worker and commits stable text via LocalAgreement, so captions
+never flicker or retract, and the final transcript always covers the
+complete utterance.
+
+- **Kotlin** — `TheStageAI.open_asr_streamer(model_name = "stt")`:
+  `send(audio)`, collect `partials`, then `finish()` for the final
+  transcript (or `cancel()`).
+- **Kotlin and Flutter** — `infer_stream` on the model, then push
+  audio with `stream_append` and end the turn with `stream_finish`
+  (or `stream_cancel`).
+- **Voice agent** — runs the same streaming ASR inside the full
+  assistant loop ([voice_agent.md](./voice_agent.md)).
+
+See [Streaming → Streaming input (ASR)](./streaming.md#streaming-input-asr)
+for both APIs with examples.
 
 ## Internal VAD Chunking
 
@@ -165,32 +174,35 @@ the platform channel as `Float32List`; do not promote to `Float64List`.
 ```kotlin
 val engine = WhisperModel(
     engines_path = dir,                  // local (prefetched) dir
-    device = "npu",                      // "npu" | "gpu" | "cpu"
+    device = "npu",                      // "npu" | "cpu"
     overlap_seconds = 0.0                // chunk overlap for long audio
 )
 val stt = TheStageASRPipeline.wrap(engine)
 ```
 
-Per-module device placement (mel on CPU, encoder / decoder on NPU) is
-set in the bundle's `metadata.json`; the top-level `device` is a coarse
-default. When downloading through the singleton, pass per-module
-overrides via `start_model(devices = mapOf("encoder" to "npu", ...))`.
+Placement comes from the bundle: the mel front-end runs on the CPU and
+the encoder and decoder on the NPU. `device` and the singleton's
+per-module `devices` overrides are accepted for call-site
+compatibility; the shipped bundle's NPU passes ignore them.
 `TheStageAI.initialize(...)` must have succeeded before either call.
 
 ## Load Progress
 
 Download / extract / load progress is reported through the singleton
-and Flutter entry points via an optional `on_load_progress` handler
-that fires through four phases with a monotonic `fraction` in
-`0.0 .. 1.0`:
+and Flutter entry points via an optional `on_load_progress`
+handler. `phase` is the signal; `fraction` is non-null only
+while downloading, where it runs `0.0 .. 1.0`:
 
 ```kotlin
 TheStageAI.start_model(
     model_name = "stt",
     engines_path = "TheStageAI/thewhisper-large-v3-turbo",
     on_load_progress = { p ->
-        // p.phase ∈ { DOWNLOADING, EXTRACTING, LOADING, READY }
-        println("[${p.model}] ${p.phase} ${(p.fraction * 100).toInt()}%")
+        // p.phase ∈ { DOWNLOADING, WAITING_FOR_WIFI,
+        //            WAITING_FOR_CONFIRMATION, EXTRACTING,
+        //            LOADING, READY }
+        val pct = p.fraction?.let { " ${(it * 100).toInt()}%" } ?: ""
+        println("[${p.model}] ${p.phase}$pct")
     }
 )
 ```
@@ -204,9 +216,16 @@ The same `on_load_progress` parameter is accepted by
 ```dart
 TheStageFlutterSDK.on_progress.listen((event) {
   if (event['model_name'] != 'stt') return;
-  final phase    = event['phase']    as String?;   // downloading | extracting | loading | ready
-  final fraction = event['progress'] as double?;   // 0.0 ... 1.0, monotonic
-  print('[stt] $phase ${(fraction ?? 0) * 100}%');
+  // phase: downloading | waiting_for_wifi |
+  //        waiting_for_confirmation | extracting | loading | ready
+  final phase    = event['phase']    as String?;
+  // Present only while downloading. Null => show an
+  // indeterminate indicator; do NOT fall back to 0.
+  final fraction = event['progress'] as num?;
+  final pct = fraction == null
+      ? ''
+      : ' ${(fraction * 100).toStringAsFixed(0)}%';
+  print('[stt] $phase$pct');
 });
 
 await TheStageFlutterSDK.start_model(

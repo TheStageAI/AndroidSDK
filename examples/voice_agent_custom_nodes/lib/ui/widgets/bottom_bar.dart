@@ -7,7 +7,8 @@ import 'agent_status.dart';
 // ============================================================================
 // FRONTEND widget — bottom control bar
 // ============================================================================
-// Shows the current status line, a live mic-level meter (while listening), and
+// Shows the current status line, a live mic-level meter (while listening), a
+// speaking meter fed by `tts_levels` (while speaking), and
 // the Start/Stop + Interrupt controls. All behaviour is delegated to the
 // controller via [onToggleRun] and `controller.interrupt`.
 // ============================================================================
@@ -46,7 +47,7 @@ class BottomBar extends StatelessWidget {
             agentStateLabel(controller),
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
-          if (controller.state == TheStageAgentState.listening) ...[
+          if (controller.state == TSAgentState.listening) ...[
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
@@ -60,15 +61,36 @@ class BottomBar extends StatelessWidget {
               ),
             ),
           ],
+          if (controller.state == TSAgentState.speaking) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: controller.ttsLevel.clamp(0.0, 1.0),
+                minHeight: 6,
+                backgroundColor: colorScheme.surfaceContainerHighest,
+                color: colorScheme.tertiary,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
+                // Disabled while a start (model load) or stop is in
+                // flight, so a second tap cannot race the first.
                 child: ElevatedButton(
-                  onPressed: controller.state == TheStageAgentState.loading
+                  onPressed: controller.busy ||
+                          controller.state == TSAgentState.loading
                       ? null
                       : onToggleRun,
-                  child: Text(controller.isRunning ? 'Stop' : 'Start'),
+                  child: Text(
+                    controller.starting
+                        ? 'Starting...'
+                        : controller.isRunning
+                            ? 'Stop'
+                            : 'Start',
+                  ),
                 ),
               ),
               if (controller.canInterrupt) ...[

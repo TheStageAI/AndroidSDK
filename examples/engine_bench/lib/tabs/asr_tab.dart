@@ -6,23 +6,24 @@ import 'package:record/record.dart';
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 import '../backend/bench_session.dart';
+import '../backend/load_state.dart';
 import '../backend/sdk_host.dart';
 import '../widgets/bench_widgets.dart';
 
 // ----------------------------------------------------------------------
 // AsrTab — Whisper turbo record-and-transcribe + benchmark
 // ----------------------------------------------------------------------
-// Android ASR = Whisper only (the iOS EngineBench's Qwen3-ASR row has no
-// Android counterpart, so it is dropped). There is no bundled fixture, so
-// Benchmark replays the LAST recorded clip warmup + N times and records
-// the medians (rtfx / decode tok/s / encoder ms).
+// Record a clip and transcribe it with Whisper large-v3 turbo. There is
+// no bundled fixture, so Benchmark replays the LAST recorded clip
+// warmup + N times and records the medians (rtfx / decode tok/s /
+// encoder ms).
 const _asrEnginesPath = String.fromEnvironment(
   'WHISPER_ENGINE_PATH',
   defaultValue: 'TheStageAI/thewhisper-large-v3-turbo',
 );
 const _asrRevision = String.fromEnvironment(
   'WHISPER_REVISION',
-  defaultValue: 'android',
+  defaultValue: '',
 );
 const _sampleRate = 16000;
 
@@ -50,7 +51,7 @@ class _AsrTabState extends State<AsrTab> {
   String _statsLine = '';
   String _transcript = '';
   String? _loadPhase;
-  double _loadFraction = 0;
+  double? _loadFraction;
   StreamSubscription<Map<String, dynamic>>? _progressSub;
 
   @override
@@ -72,10 +73,10 @@ class _AsrTabState extends State<AsrTab> {
     if (_loaded) return;
     await SdkHost.instance.ensureInitialized();
     _progressSub = TheStageFlutterSDK.on_progress.listen((e) {
-      if (!mounted) return;
+      if (!mounted || !isProgressFor(e, _modelName)) return;
       setState(() {
         _loadPhase = e['phase'] as String?;
-        _loadFraction = (e['progress'] as num?)?.toDouble() ?? 0;
+        _loadFraction = (e['progress'] as num?)?.toDouble();
       });
     });
     try {
@@ -84,7 +85,6 @@ class _AsrTabState extends State<AsrTab> {
         model_name: _modelName,
         engines_path: _asrEnginesPath,
         revision: _asrRevision,
-        device: 'npu',
       );
       _loaded = true;
     } finally {

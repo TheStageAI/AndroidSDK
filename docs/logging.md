@@ -64,7 +64,19 @@ most recent message + code. Branch your UI on the symbolic code rather
 than parsing the message text, which may evolve across SDK versions.
 Known codes: `SDK_ERROR_INPUT_TOO_LONG`, `SDK_ERROR_SENTENCE_TOO_LONG`,
 `SDK_ERROR_LLM_GENERATE_FAILED`, `SDK_ERROR_LLM_LOAD_FAILED`,
-`SDK_ERROR_MODEL_UNAVAILABLE`.
+`SDK_ERROR_MODEL_UNAVAILABLE`, `SDK_ERROR_INSUFFICIENT_STORAGE`.
+
+`INSUFFICIENT_STORAGE` is raised **before** any bytes are written, and
+is worth handling distinctly: it is the one load failure the user can
+actually fix, by freeing space. The message names what was required
+and what was free.
+
+To catch it: Kotlin `EngineArchiveError.InsufficientStorage`
+(`ai.thestage.qlip.delivery`; carries `need_bytes` / `free_bytes`);
+Flutter a `PlatformException` with code `'INSUFFICIENT_STORAGE'`.
+Removing a loaded model throws `ModelManagerError.ModelInUse` in
+Kotlin; in Flutter it is a `PlatformException` with no dedicated code.
+See [model_management.md](./model_management.md#handling-storage-and-in-use-errors).
 
 ## Session log file
 

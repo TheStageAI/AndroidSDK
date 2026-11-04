@@ -121,12 +121,12 @@ so it only responds to an enrolled speaker. Configure it on the agent:
 Enroll (or re-enroll) the reference embedding on a running agent:
 
 ```kotlin
-// embedding obtained from an earlier speaker_id infer() call.
-agent.enroll_speaker(embedding)   // DoubleArray? — null clears enrollment
+// embedding: the List<Double> from an earlier speaker_id infer() call.
+agent.enroll_speaker(embedding.toDoubleArray())   // null clears enrollment
 ```
 
 ```dart
-await agent.enrollSpeaker(embedding: embedding);   // List<double>?
+await agent.enroll_speaker(embedding: embedding);   // List<double>?
 ```
 
 `vad_speaker_id_wake_word` layers speaker verification on top of the

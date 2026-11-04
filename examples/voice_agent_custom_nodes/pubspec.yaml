@@ -1,7 +1,7 @@
 name: voice_agent_custom_nodes
 description: "Voice Agent Custom Nodes — TheStage AI Android SDK (extraNodes, VLM captions, screen record)"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+1
 
 environment:
   sdk: ^3.10.7

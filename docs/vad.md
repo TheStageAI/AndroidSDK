@@ -74,7 +74,8 @@ threshold and hysteresis.
 
 - 16 kHz mono `FloatArray`, samples in `[-1.0, 1.0]`.
 - **Chunk size:** exactly 512 samples per `infer` call. Smaller chunks
-  are zero-padded to 512 internally; larger chunks are rejected.
+  are zero-padded to 512 internally; larger chunks are truncated to
+  their first 512 samples, so split longer audio yourself.
 - **Stateful.** The model keeps an LSTM hidden state across calls.
   Pass `"reset_state": true` between independent utterances (or call
   `reset_state()` on the direct `SileroVAD` API).
@@ -202,8 +203,9 @@ into the input buffer). From Kotlin you can also call
 
 For a streaming, turn-level speech gate (onset/offset frames, pre-roll,
 max accumulation, speculative ASR) use `TheStageVoiceAgent` instead —
-its VAD node does live endpointing. `WhisperPipeline` also runs an
-internal Silero pre-pass before transcribing.
+its VAD node does live endpointing. The Whisper pipeline
+(`TheStageASRPipeline`) also runs an internal Silero pre-pass before
+transcribing.
 
 ## Cleanup
 

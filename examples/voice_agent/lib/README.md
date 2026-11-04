@@ -56,6 +56,7 @@ Both flows are **two events**: the first feeds a *live* bubble, the second
 | ASR    | `user_request`         | `messages` (user)   | final USER bubble |
 | LLM    | `response_delta`       | `streamingResponse` | live ASSISTANT bubble (left) |
 | LLM    | `response_done`        | `messages` (asst)   | final ASSISTANT bubble |
+| Tools  | `tool_started` / `tool_ended` | `messages` (tool) | monospace tool line (never spoken) |
 
 `TranscriptArea` draws `messages` first, then appends the live partial (user)
 and the live stream (assistant) so the newest content is always at the bottom.
@@ -77,8 +78,14 @@ state change repaints the relevant bubbles.
 `VoiceAgentSettings.toConfig()` builds the `config` map passed to
 `agent.start(config:)`. It's grouped by subsystem:
 
-- **LLM** — `llm_provider` / `llm_model` / `llm_endpoint` / `llm_api_key` /
-  `system_prompt` / `max_tokens` / `temperature`.
+- **LLM** — `llm_provider` / `llm_model` / `llm` (the on-device engines) /
+  `llm_endpoint` / `llm_api_key` / `system_prompt` / `llm_tools` /
+  `max_tokens` / `temperature`. `llm_tools` (`web` here: weather,
+  time, search) picks the on-device LLM's built-in tools; the system
+  prompt keeps a "Tool pattern (always):" block that tells the model
+  to speak a short filler before a call. The default provider is
+  `local`: the on-device `TheStageAI/LFM2.5-350M` (others in the
+  picker), run with thinking off.
 - **ASR** — `stt` (Whisper), `stt_language`, `asr_streaming` (live captions),
   plus the `turn_*` keys for neural (smart-turn) end-of-turn detection.
 - **TTS** — `tts` (NeuTTS), `tts_voice`.

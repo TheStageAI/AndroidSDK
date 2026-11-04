@@ -10,19 +10,21 @@ import '../../backend/voice_agent_controller.dart';
 // ============================================================================
 
 /// Colour of the status dot in the app bar for the current agent state.
-Color agentStateColor(TheStageAgentState state) {
+Color agentStateColor(TSAgentState state) {
   switch (state) {
-    case TheStageAgentState.idle:
+    case TSAgentState.idle:
       return Colors.grey;
-    case TheStageAgentState.loading:
+    case TSAgentState.loading:
       return Colors.amber;
-    case TheStageAgentState.sleeping:
+    case TSAgentState.sleeping:
       return Colors.blueGrey;
-    case TheStageAgentState.listening:
+    case TSAgentState.listening:
       return Colors.green;
-    case TheStageAgentState.thinking:
+    case TSAgentState.thinking:
       return Colors.purple;
-    case TheStageAgentState.speaking:
+    case TSAgentState.tool_calling:
+      return Colors.indigo;
+    case TSAgentState.speaking:
       return Colors.blue;
   }
 }
@@ -30,18 +32,20 @@ Color agentStateColor(TheStageAgentState state) {
 /// Human-readable status line shown in the bottom bar.
 String agentStateLabel(VoiceAgentController c) {
   switch (c.state) {
-    case TheStageAgentState.idle:
-      return 'Idle';
-    case TheStageAgentState.loading:
+    case TSAgentState.idle:
+      return c.starting ? 'Starting...' : 'Idle';
+    case TSAgentState.loading:
       if (c.currentLoadingModel == null) return 'Loading models...';
       return '${c.currentLoadingModel} - ${agentPhaseLabel(c)}';
-    case TheStageAgentState.sleeping:
+    case TSAgentState.sleeping:
       return 'Waiting for wake word...';
-    case TheStageAgentState.listening:
+    case TSAgentState.listening:
       return 'Listening...';
-    case TheStageAgentState.thinking:
+    case TSAgentState.thinking:
       return 'Thinking...';
-    case TheStageAgentState.speaking:
+    case TSAgentState.tool_calling:
+      return 'Calling tool...';
+    case TSAgentState.speaking:
       return 'Speaking...';
   }
 }
@@ -51,6 +55,10 @@ String agentPhaseLabel(VoiceAgentController c) {
   switch (c.loadPhase) {
     case 'downloading':
       return 'downloading ${(c.downloadProgress * 100).toStringAsFixed(0)}%';
+    case 'waiting_for_wifi':
+      return 'waiting for Wi-Fi...';
+    case 'waiting_for_confirmation':
+      return 'confirm the download to continue';
     case 'extracting':
       return 'extracting...';
     case 'loading':

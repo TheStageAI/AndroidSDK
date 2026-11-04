@@ -34,8 +34,22 @@ internal fun TheStageFlutterPlugin.__handle_prefetch_model(
         return
     }
     val model_type = args["model_type"] as? String
-    val revision = args["revision"] as? String ?: "main"
+    // Blank, not "main": blank defers to the pinned commit for
+    // this repo. Defaulting to "main" here would make every
+    // Flutter caller an explicit pin override, pointing the
+    // SDK at a branch head that can move under a shipped app.
+    val revision = args["revision"] as? String ?: ""
+    // Empty = best available for this model on this device. A
+    // value is a constraint the SDK fails on, so a prefetch and
+    // a later load with the same argument resolve the same
+    // bundle rather than downloading two.
+    val device = args["device"] as? String ?: ""
     val config = args["config"] as? Map<String, Any?>
+    // False unless the caller asks: a prefetch installs what is
+    // missing and leaves what is there. True is how an app takes
+    // an update available_updates() reported.
+    val replace_existing =
+        args["replace_existing"] as? Boolean ?: false
 
     // Progress events for prefetch_model use `repo_id` as
     // the model_name field — same convention as iOS so the
@@ -59,7 +73,9 @@ internal fun TheStageFlutterPlugin.__handle_prefetch_model(
                 repo_id = repo_id,
                 model_type = model_type,
                 revision = revision,
+                device = device,
                 config = config,
+                replace_existing = replace_existing,
                 on_load_progress = on_load_progress,
             )
             withContext(Dispatchers.Main) {
@@ -89,7 +105,11 @@ internal fun TheStageFlutterPlugin.__handle_check_model_availability(
         __fail(result, "Missing model_path.")
         return
     }
-    val revision = args["revision"] as? String ?: "main"
+    // Blank, not "main": blank defers to the pinned commit for
+    // this repo. Defaulting to "main" here would make every
+    // Flutter caller an explicit pin override, pointing the
+    // SDK at a branch head that can move under a shipped app.
+    val revision = args["revision"] as? String ?: ""
 
     __scope.launch(Dispatchers.Default) {
         try {
@@ -116,3 +136,4 @@ internal fun TheStageFlutterPlugin.__handle_check_model_availability(
         }
     }
 }
+

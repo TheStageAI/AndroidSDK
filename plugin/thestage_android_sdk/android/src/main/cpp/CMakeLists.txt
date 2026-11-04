@@ -13,25 +13,22 @@ add_link_options(
     "-Wl,-z,common-page-size=16384")
 
 # ------------------------------------------------------------------
-# Source tree paths (cloned by setup_espeak_ng.sh)
+# Source tree paths (optional espeak-ng checkout)
 # ------------------------------------------------------------------
 set(THIRD_PARTY
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../third_party/espeak-ng-spm/Sources)
 set(ESPEAK_REPO
     ${THIRD_PARTY}/libespeak-ng/_repo)
 
-# Optional: espeak-ng is TTS-only. Apps that don't ship
-# NeuTTS (e.g. voice_transcribe) can skip this entire
-# build by leaving third_party/espeak-ng-spm absent —
+# Optional: the published NeuTTS bundles carry their own
+# phonemizer, so no app needs espeak-ng. Without
+# third_party/espeak-ng-spm this build is skipped and
 # the plugin's Kotlin side catches the resulting
-# UnsatisfiedLinkError and continues without the
-# phonemizer. Run dist/scripts/setup_espeak_ng.sh +
-# prepare_espeak_assets.sh when TTS is needed.
+# UnsatisfiedLinkError and continues without it.
 if(NOT EXISTS "${ESPEAK_REPO}/src/libespeak-ng/speech.c")
     message(STATUS
         "espeak-ng sources not found at ${ESPEAK_REPO} — "
-        "skipping libespeak_ng_jni build (TTS phonemizer "
-        "will be unavailable at runtime)")
+        "skipping the optional libespeak_ng_jni build")
     return()
 endif()
 

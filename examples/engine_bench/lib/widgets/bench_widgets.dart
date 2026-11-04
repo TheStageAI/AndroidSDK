@@ -167,24 +167,31 @@ class LoadProgress extends StatelessWidget {
   });
 
   final String phase;
-  final double fraction;
+
+  /// Null whenever the SDK reports no measurable progress — which
+  /// is every phase but `downloading`. Drives an indeterminate bar.
+  final double? fraction;
 
   @override
   Widget build(BuildContext context) {
-    // Only `downloading` carries a meaningful fraction; the others are
-    // coarse/blocking, so show an indeterminate bar for them.
-    final determinate = phase == 'downloading' && fraction > 0;
+    final f = fraction;
+    final determinate = f != null;
+    final label = switch (phase) {
+      'waiting_for_wifi' => 'waiting for Wi-Fi',
+      'waiting_for_confirmation' => 'confirm download',
+      _ => phase,
+    };
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LinearProgressIndicator(value: determinate ? fraction : null),
+          LinearProgressIndicator(value: determinate ? f : null),
           const SizedBox(height: 4),
           Text(
             determinate
-                ? '$phase ${(fraction * 100).toStringAsFixed(0)}%'
-                : '$phase...',
+                ? '$label ${(f * 100).toStringAsFixed(0)}%'
+                : '$label...',
             style: _mono,
           ),
         ],

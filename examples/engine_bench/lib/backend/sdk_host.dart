@@ -4,8 +4,8 @@ import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 // SdkHost
 // ----------------------------------------------------------------------
 /// One-time SDK `initialize` guard shared by every tab. The token is
-/// injected at build time via the unified Android convention:
-///   --dart-define=TS_API_TOKEN=th_...
+/// TS_API_TOKEN in this app's secrets.json, injected at build time via
+///   --dart-define-from-file=secrets.json
 /// Online initialize is required — the token is validated before any
 /// pipeline loads.
 class SdkHost {
@@ -23,8 +23,8 @@ class SdkHost {
     if (_initialized) return;
     if (apiToken.isEmpty) {
       throw StateError(
-        'TS_API_TOKEN not set. Run with '
-        '--dart-define=TS_API_TOKEN=th_...',
+        'TS_API_TOKEN not set. Put it in secrets.json and run with '
+        '--dart-define-from-file=secrets.json',
       );
     }
     await TheStageFlutterSDK.initialize(api_token: apiToken);

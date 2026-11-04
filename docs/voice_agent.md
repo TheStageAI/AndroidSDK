@@ -37,7 +37,7 @@ val config = TheStageAgentConfig(
 
 val agent = TheStageVoiceAgent(config)
 
-// Legacy event stream (state changes, transcripts, deltas, errors).
+// Event stream (state changes, transcripts, deltas, errors).
 launch {
     agent.events.collect { event ->
         when (event.kind) {
@@ -69,17 +69,21 @@ agent.start()
 ```
 
 For a fully on-device assistant, set `llm_provider = "local"` and point
-`llm` at an on-device LLM bundle (e.g. `"TheStageAI/Qwen3-0.6B"` or
-`"TheStageAI/LFM2.5-230M"`).
+`llm` at an on-device LLM bundle from the [LLM](./llm.md) page (e.g.
+`"TheStageAI/LFM2.5-1.2B"`). The agent runs it with thinking off, so
+replies go straight to speech, and gives it the built-in
+[tools](#tools) (weather, time, search, phone actions) unless you set
+`llm_tools = "none"`.
 
 ## Quick Start (Flutter)
 
 ```dart
+import 'dart:io';
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 await TheStageFlutterSDK.initialize(api_token: 'your-api-token');
 
-final agent = TheStageVoiceAgentFlutter();
+final agent = TSVoiceAgent();
 
 agent.events.listen((event) {
   switch (event['kind']) {
@@ -91,11 +95,12 @@ agent.events.listen((event) {
 });
 
 // Typed broadcast streams (one EventChannel each).
-agent.llmDeltas.listen((delta) => /* update assistant bubble */);
-agent.transcripts.listen((text) => /* show user turn */);
-agent.vadProbabilities.listen((p) => /* drive a level meter */);
+agent.llm_deltas.listen((delta) { /* update assistant bubble */ });
+agent.transcripts.listen((text) { /* show user turn */ });
+agent.vad_probabilities.listen((p) { /* drive a level meter */ });
+agent.tts_levels.listen((level) { /* animate an avatar */ });
 
-await agent.start(config: {
+final caps = await agent.start(config: {
   'vad': 'TheStageAI/silero-vad',
   'stt': 'TheStageAI/thewhisper-large-v3-turbo',
   'tts': 'TheStageAI/neutts-multilingual',
@@ -109,8 +114,63 @@ await agent.start(config: {
 // Later:
 await agent.interrupt();          // stop current response
 await agent.say('Welcome back!'); // speak arbitrary text (skips LLM)
-await agent.updateInterruptConfig(interruptMinSpeechMs: 200);
+await agent.update_interrupt_config(interrupt_min_speech_ms: 200);
 await agent.stop();
+```
+
+`start()` returns the agent's [capabilities](#capabilities) and also
+keeps them in `agent.capabilities`.
+
+## Capabilities
+
+What a started agent can actually do depends on the stack it built: a
+config without `tts` is transcription-only, a config without an LLM
+never answers. The agent reports this after `start()`:
+
+| Key | Type | `true` when |
+|-----|------|-------------|
+| `listening` | bool | The mic and VAD are running |
+| `transcribing` | bool | Speech recognition is running |
+| `responding` | bool | A spoken turn reaches an LLM that answers |
+| `speaking` | bool | TTS is running: replies and `say()` are heard |
+| `reasons` | `Map<String, String>` | One entry per `false` capability, keyed by its name, e.g. `{'speaking': 'no tts configured (transcription-only)'}` |
+
+`responding` is `false` without an LLM, for `llm_provider = "local"`
+without an `llm` path, for an empty `llm_endpoint`, and with
+`turn_end_mode = TurnEndMode.NONE` (Flutter `'turn_end_mode': 'none'`;
+no turn ever ends, so speech never reaches the LLM; `send_request`
+still does).
+
+After `start()` with `auto_listen = false`, `listening` is `false`
+(reason: the mic is not open yet) until
+[`begin_listening()`](#deferred-mic-auto_listen); `transcribing` and
+`responding` follow it. In Flutter, `begin_listening()` and
+`set_voice()` refresh `agent.capabilities`.
+
+Set `require_full_stack` to make `start()` fail unless the configured
+stack — audio input + VAD, speech recognition, LLM and TTS — was
+built. The error lists the reasons, and nothing keeps running. A
+deferred mic (`auto_listen = false`) does not fail it.
+
+**Kotlin:**
+
+```kotlin
+val agent = TheStageVoiceAgent(config.copy(require_full_stack = true))
+agent.start()                       // throws IllegalStateException
+val caps = agent.capabilities       // TheStageAgentCapabilities
+if (!caps.speaking) println(caps.reasons["speaking"])
+```
+
+**Flutter:**
+
+```dart
+final caps = await agent.start(config: config);
+if (caps['speaking'] != true) {
+  print((caps['reasons'] as Map)['speaking']);
+}
+
+// Or fail fast:
+await agent.start(config: config, require_full_stack: true);
 ```
 
 ## Deferred Mic (`auto_listen`)
@@ -147,7 +207,7 @@ await agent.start(config: {
   'auto_listen': false,      // load models, keep mic closed
 });
 // ... later, when ready:
-await agent.beginListening();
+await agent.begin_listening();
 ```
 
 ## State Machine
@@ -160,6 +220,10 @@ idle → loading ─────►│  listening ⇄ thinking → speaking     
                      │  else (wake-word configured)           │
                      │  sleeping ─WW─► listening ⇄ thinking   │──► speaking ──► sleeping
                      └────────────────────────────────────────┘
+
+         a tool call inside a turn:
+         thinking ─► tool_calling ─► thinking ─► speaking
+         speaking ─► tool_calling ─► speaking   (a spoken filler first)
 ```
 
 | State | Meaning |
@@ -169,16 +233,17 @@ idle → loading ─────►│  listening ⇄ thinking → speaking     
 | `sleeping` | Wake-word standby. VAD/WW are live, ASR/LLM/TTS are gated off. Only entered when `wake_word` is configured. |
 | `listening` | Mic open, VAD scanning for speech |
 | `thinking` | Speech committed, LLM is generating |
+| `tool_calling` | The model called a tool and the agent is running it. Barge-in works and cancels the tool. Left for `speaking` if the reply's audio already started, else `thinking`. |
 | `speaking` | TTS streaming audio to the speaker |
 
 State is derived inside the orchestrator from the event stream and is
 the only place the state machine lives. It is broadcast as a
 `state_changed` event and also exposed as `agent.state`
-(`StateFlow<TheStageAgentState>`).
+(`StateFlow<TheStageAgentState>` in Kotlin, `TSAgentState` in Flutter).
 
 ## Public Output Channels
 
-In addition to the legacy `events` stream, the agent exposes typed
+In addition to the `events` stream, the agent exposes typed
 fan-out ports as plain Kotlin `Flow`s. Each collector sees every value
 — perfect for plugging UI widgets, log taps and speech-to-file
 recorders side-by-side without intermediate bookkeeping.
@@ -188,6 +253,7 @@ recorders side-by-side without intermediate bookkeeping.
 | `agent.llm_deltas` | `Flow<String>` | Each LLM token delta as it is generated, in order |
 | `agent.transcripts` | `Flow<String>` | One value per user turn (the finalized Whisper transcript; empty on aborted turns) |
 | `agent.vad_probabilities` | `Flow<Double>` | Per-frame Silero probability ([0, 1]); roughly one value every 32 ms |
+| `agent.tts_levels` | `Flow<Double>` | Loudness of the assistant's speech as it plays ([0, 1]); about 30 values per second while speaking, then a single `0.0` when playback ends or is interrupted |
 | `agent.state` | `StateFlow<TheStageAgentState>` | Current lifecycle state |
 
 Stable partial captions (committed-so-far text while the user speaks)
@@ -205,10 +271,50 @@ val tap = launch {
 tap.cancel()
 ```
 
-The same channels are exposed in Flutter as `agent.llmDeltas`
-(`Stream<String>`), `agent.transcripts` (`Stream<String>`), and
-`agent.vadProbabilities` (`Stream<double>`), each backed by its own
-`EventChannel`.
+The same channels are exposed in Flutter as `agent.llm_deltas`
+(`Stream<String>`), `agent.transcripts` (`Stream<String>`),
+`agent.vad_probabilities` (`Stream<double>`) and `agent.tts_levels`
+(`Stream<double>`), each backed by its own `EventChannel`.
+
+### Speech level for an avatar
+
+`tts_levels` is computed from the audio actually handed to the
+speaker, so it follows what the user hears, not how fast the TTS
+synthesises. Each ~33 ms window of playback is measured as RMS and
+mapped from decibels onto [0, 1]: −55 dBFS and below is `0.0`,
+−10 dBFS and above is `1.0`, linear in between (normal speech sits
+around 0.6–0.9). Values are paced to playback, at most about 30 per
+second, and the stream ends each reply with `0.0`, so a mouth closes
+on its own after the last word or a barge-in. Nothing is emitted while
+the agent is silent.
+
+**Kotlin**
+
+```kotlin
+lifecycleScope.launch {
+    agent.tts_levels.collect { level ->
+        avatar.mouth_open = level.toFloat()   // 0 = closed
+    }
+}
+```
+
+**Flutter**
+
+```dart
+final mouth = ValueNotifier<double>(0);
+final sub = agent.tts_levels.listen((level) => mouth.value = level);
+
+// In build():
+ValueListenableBuilder<double>(
+  valueListenable: mouth,
+  builder: (_, level, __) => Transform.scale(
+    scaleY: 0.2 + 0.8 * level,
+    child: const Icon(Icons.circle, size: 48),
+  ),
+);
+// ...later
+await sub.cancel();
+```
 
 ## Configuration
 
@@ -219,29 +325,48 @@ The same channels are exposed in Flutter as `agent.llmDeltas`
 | `vad` | String | required | HF id or local path of Silero VAD bundle |
 | `stt` | String | required | HF id or local path of Whisper bundle |
 | `tts` | String? | `null` | HF id or local path of NeuTTS bundle (required to speak) |
-| `tts_voice` | String | `"paul"` | Voice preset id |
-| `wake_word` | String? | `null` | Optional wake-word bundle. When set, the agent rests in `sleeping` until the wake word fires. |
+| `tts_voice` | String | `"paul"` | Voice id from the TTS bundle |
+| `tts_voice_dir` | String? | `null` | A [voice pack](#voices) folder holding `voice.json`. Wins over `tts_voice` |
+| `tts_language` | String? | `null` | TTS language override, e.g. `"french"`. `null` = the voice's own language |
+| `wake_word` | String? | `null` | Optional wake-word bundle — HF id or local path. When set, the agent rests in `sleeping` until the wake word fires. A wake-word model recognises one specific phrase, so none ships with the SDK: bring your own. |
 | `stt_language` | String | `"en"` | Whisper decode language (ISO-639-1, e.g. `"en"`, `"es"`) |
-| `stt_revision` | String | `"android"` | HF branch / tag for STT |
-| `tts_revision` | String | `"android"` | HF branch / tag for TTS |
-| `component_offload` | Boolean | `false` | Android memory optimization: swap STT (whisper) and the TTS-LLM in/out of memory across listening/speaking so they never co-reside. Default off = always-loaded. |
+| `stt_revision` | String | `""` | STT commit; empty = the commit this SDK pins. Leave it empty |
+| `tts_revision` | String | `""` | TTS commit; empty = the pinned commit. Leave it empty |
+| `vad_revision` | String | `""` | VAD commit; empty = the pinned commit. Leave it empty |
+| `ww_revision` | String | `""` | Wake-word commit; empty = the pinned commit |
+| `speaker_id` | String? | `null` | Speaker-id bundle (`TheStageAI/redimnet2`) — HF id or local path. Loaded only when a `turn_start_mode` or `interrupt_mode` needs speaker verification |
+| `speaker_id_revision` | String | `""` | Speaker-id commit; empty = the pinned commit |
+| `speaker_similarity_threshold` | Double | 0.75 | Similarity to the enrolled embedding a speaker must reach to be verified |
+| `enrolled_speaker_embedding` | `DoubleArray?` (Flutter `List<double>`) | `null` | The speaker to verify against; or call `enroll_speaker` on a running agent |
+| `require_full_stack` | Boolean | `false` | Fail `start()` unless every [capability](#capabilities) is available |
+| `component_offload` | Boolean | `false` | Kotlin only. Memory optimization: swap STT (whisper) and the TTS-LLM in/out of memory across listening/speaking so they never co-reside. Default off = always-loaded. |
 
 ### Compute device routing (Snapdragon NPU)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `vad_device` | String | `"npu"` | Silero VAD compute device |
-| `stt_device` | String | `"npu"` | Whisper coarse default |
+| `vad_device` | String | `""` | Silero VAD bundle class |
+| `stt_device` | String | `""` | Whisper bundle class |
 | `stt_devices` | `Map<String,String>?` | `null` | Per-module override: `mel`, `encoder`, `decoder` |
-| `tts_device` | String | `"npu"` | NeuTTS coarse default |
+| `tts_device` | String | `""` | NeuTTS bundle class |
 | `tts_devices` | `Map<String,String>?` | `null` | Per-module override: `llm`, `neucodec` |
-| `ww_device` | String | `"npu"` | Wake-word compute device |
+| `llm_device` | String | `""` | On-device LLM bundle class (`llm_provider = "local"`) |
+| `ww_device` | String | `""` | Wake-word bundle class |
+| `turn_detector_device` | String | `""` | smart-turn bundle class |
+| `speaker_id_device` | String | `""` | Speaker-id bundle class |
 
-The Qualcomm Snapdragon NPU (Hexagon/HTP via QNN) is the default for
-the heavy graphs (Whisper encoder/decoder, the NeuTTS LLM) because it
-runs the fixed-shape compiled context binaries efficiently and keeps
-running when the app is in the background (with a foreground service).
-GPU and CPU are fallbacks. Small stateful models (Silero VAD, the
+Leave every `*_device` empty: each component then loads the best
+bundle its model publishes for the phone, exactly like
+`start_model(device = "")` (see
+[Choosing the device](./model_management.md#choosing-the-device)).
+`"npu"` or `"cpu"` is a constraint: `start()` fails if that model
+publishes no such bundle — Silero VAD, for one, publishes only a CPU
+bundle.
+
+The Qualcomm Snapdragon NPU (Hexagon) runs the heavy models: Whisper's
+encoder/decoder and the on-device LLM on TheStage's own NPU runtime,
+the NeuTTS LLM through QNN (compiled context binaries). Both keep running when the app is in the background
+(with a foreground service). Small stateful models (Silero VAD, the
 smart-turn classifier) run on ORT-CPU regardless — they don't benefit
 from the NPU. Some sub-modules are pinned per the bundle's
 `metadata.json` (e.g. the Whisper mel front-end stays on CPU).
@@ -250,16 +375,19 @@ from the NPU. Some sub-modules are pinned per the bundle's
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `llm_provider` | String | `"local"` | `"local"` (on-device SDK model) or `"openai_compatible"` (remote SSE chat-completions) |
+| `llm_provider` | String | `"local"` (Flutter: `"openai_compatible"`) | `"local"` (on-device SDK model) or `"openai_compatible"` (remote SSE chat-completions) |
 | `llm` | String? | `null` | Local: engines path of the on-device LLM |
+| `llm_revision` | String | `""` | Local LLM commit; empty = the pinned commit. Leave it empty |
 | `llm_model` | String | `"gpt-4o-mini"` | Remote model id |
 | `llm_endpoint` | String | OpenAI chat-completions | Remote endpoint URL |
 | `llm_api_key` | String | `""` | Remote API key |
-| `llm_provider_override` | `LlmProvider?` | `null` | Inject a custom / mock provider (overrides the above) |
-| `system_prompt` | String | helpful default | Prepended as a system message |
+| `llm_provider_override` | `LlmProvider?` | `null` | Kotlin only. Inject a custom / mock provider (overrides the above) |
+| `system_prompt` | String | `DefaultTools.voice_system_prompt` | Prepended as a system message. The default is a short spoken assistant that knows when and how to use [tools](#tools). |
+| `llm_tools` | String | `"voice"` | Built-in [tools](#tools) of the on-device LLM: `voice`, `web`, `phone` or `none` |
+| `tools` | `List<Tool>?` | `null` | Kotlin only: your own tools for the on-device LLM; replaces the `llm_tools` preset |
 | `max_tokens` | Int | 256 | Generation cap |
 | `temperature` | Double | 0.7 | Sampling temperature |
-| `chat_memory` | `ChatMemory` | `SlidingWindowMemory(max_turns = 10)` | History strategy |
+| `chat_memory` | `ChatMemory` | `SlidingWindowMemory(max_turns = 10)` | Kotlin only. History strategy |
 
 ### VAD / endpointing
 
@@ -274,16 +402,17 @@ from the NPU. Some sub-modules are pinned per the bundle's
 All durations are in **milliseconds**; the nodes convert them to the live VAD
 frame cadence (`frame_samples / sample_rate`, ≈32 ms for Silero @ 16 kHz)
 internally. `silence_timeout_ms` only applies to the default VAD endpointer
-(`turn_detection_mode == "vad"`); the DNN endpointer ignores it.
+(`turn_end_mode = TurnEndMode.VAD`); the DNN endpointer ignores it.
 
 ### Turn detection (end-of-turn)
 
-The endpointer is pluggable. `"vad"` (default) commits a turn after a
-fixed silence gap (`silence_timeout_ms`). `"dnn"` replaces that with the
+The endpointer is pluggable (`turn_end_mode`; Flutter strings in
+brackets). `VAD` (`'vad'`, default) commits a turn after a
+fixed silence gap (`silence_timeout_ms`). `DNN` (`'dnn'`) replaces that with the
 pipecat **smart-turn-v3** model: at each pause it runs a learned
 end-of-turn check on the trailing waveform, so the agent waits through
 mid-sentence pauses but responds quickly once you're actually done.
-`"none"` never fires end-of-turn (continuous transcription).
+`NONE` (`'none'`) never fires end-of-turn (continuous transcription).
 
 VAD is the cheap gate (onset + pause detection); the DNN is the expensive
 semantic check run **single-flight, off-thread, only at pauses**, with a hard
@@ -291,12 +420,35 @@ semantic check run **single-flight, off-thread, only at pauses**, with a hard
 window. The model sees the **continuous** waveform from onset (incl. pre-roll)
 through the pause — never VAD-filtered audio.
 
+### Using the turn detector on its own
+
+The classifier is also a model you can start and call directly, if you
+are building your own turn-taking rather than using the voice agent.
+Start `TheStageAI/smart-turn-v3` like any other model and pass the
+trailing waveform:
+
+```json
+{ "audio": [ ... 16 kHz mono floats in [-1, 1] ... ] }
+```
+
+It returns `[{"probability": 0.91}]` — the probability that the turn
+is **complete**. Pass the continuous audio from speech onset through
+the current pause; any length works, since the front-end keeps the
+last 8 s and left-pads a shorter tail.
+
+A second key, `input_features`, accepts a pre-computed 80 × 800 log-mel
+if you already hold one. Pass **one or the other** — passing both is an
+error rather than a precedence rule, because the two cannot be told
+apart at runtime: 80 × 800 mel floats is exactly 4.0 s of 16 kHz PCM,
+so a length heuristic would silently read audio as features and return
+a confident wrong answer.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `turn_detection_mode` | String | `"vad"` | `"vad"` (silence timeout), `"dnn"` (smart-turn model), or `"none"` |
-| `turn_detector` | String | `"TheStageAI/smart-turn-v3"` | smart-turn engines repo/path (used only for `"dnn"`) |
-| `turn_detector_revision` | String | `"main"` | HF branch / tag for the smart-turn engines |
-| `turn_detector_device` | String | `"cpu"` | Compute device for the classifier (ORT-CPU on Android) |
+| `turn_end_mode` | `TurnEndMode` | `VAD` | `VAD` (silence timeout), `DNN` (smart-turn model) or `NONE`; Flutter `'vad'` / `'dnn'` / `'none'` |
+| `turn_detector` | String | `"TheStageAI/smart-turn-v3"` | smart-turn engines repo/path (used only for `DNN`) |
+| `turn_detector_revision` | String | `""` | smart-turn commit; empty = the pinned commit |
+| `turn_detector_device` | String | `""` | Bundle class for the classifier; empty = best available (it runs on the CPU) |
 | `turn_eot_threshold` | Double | 0.85 | Completion prob at/above which a checkpoint counts as "done" |
 | `turn_eot_confirm_count` | Int | 2 | Consecutive "done" verdicts required before committing. Debounces a single spike on a mid-sentence pause. `1` = fire on first positive. |
 | `turn_eot_high_confidence` | Double | 1.0 | Verdict prob that commits immediately, skipping confirmation. `>= 1.0` (default) disables the bypass (see note). |
@@ -308,9 +460,11 @@ through the pause — never VAD-filtered audio.
 | `turn_asr_silence_hangover_ms` | Int | 200 | Trailing silence still fed to streaming ASR after speech stops (bounds "mm"/"?" filler; the turn model still sees the full pause) |
 
 ```kotlin
+import ai.thestage.qlip.voice_agent.graph.TurnEndMode
+
 val config = TheStageAgentConfig(
     vad = ..., stt = ..., tts = ..., llm_provider = "local", llm = ...,
-    turn_detection_mode = "dnn",
+    turn_end_mode = TurnEndMode.DNN,
     turn_detector = "TheStageAI/smart-turn-v3"   // or a local dir
 )
 ```
@@ -326,10 +480,10 @@ on first use. Knobs hot-apply at runtime via
 `turn_eot_confirm_count` consecutive "done" verdicts (re-evaluated every
 `turn_reeval_interval_ms`) debounces that, at the cost of a little latency.
 The `turn_eot_high_confidence` fast-path (commit immediately on a very
-confident single verdict) is **off by default** (`1.0`): the eval harness
-showed it commits before enough trailing silence is buffered and clips the
-last ASR word, even on 0.99-confident verdicts. Lower it (e.g. `0.97`) only
-if you measure that it doesn't truncate finals on your audio.
+confident single verdict) is **off by default** (`1.0`): it can commit
+before enough trailing silence is buffered and clip the last ASR word, even
+on 0.99-confident verdicts. Lower it (e.g. `0.97`) only if you measure that
+it doesn't truncate finals on your audio.
 
 ### Streaming transcription (ASR)
 
@@ -369,32 +523,50 @@ cross-channel race).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `interrupt_mode` | `InterruptMode` | `VAD` (≡ `speech_only`) | How (and whether) the user can barge in. Config-surface string values: `none` / `speech_only` / `wake_word`. |
-| `allow_interruptions` | Boolean | `true` | Back-compat alias: `true` ⇔ `interrupt_mode != NONE` |
-| `interrupt_min_speech_ms` | Int | 600 | Sustained speech needed to interrupt (Flutter slider goes down to 100 ms) |
+| `interrupt_mode` | `InterruptMode` | `VAD` | How (and whether) the user can barge in — see below. Flutter: the mode's string, e.g. `'none'` or `'vad'` |
+| `interrupt_min_speech_ms` | Int | 600 | Sustained speech needed to interrupt |
 | `interrupt_onset_ms` | Int | 0 | Sustained positive-VAD duration to fire a barge-in. When `> 0` it takes precedence over `interrupt_min_speech_ms`. |
 | `interrupt_threshold` | Double | 0.9 | VAD prob threshold for barge-in, independent of `vad_threshold`. Kept strict so the agent doesn't trip on its own TTS / AEC residue. |
 | `interrupt_min_playback_ms` | Int | 250 | Grace at TTS turn start during which barge-in is suppressed (lets AEC re-converge) |
 | `interrupt_initial_lockout_ms` | Int | 1000 | One-time, longer barge-in lockout on the *first* TTS playback after start (covers AEC cold-start). Should exceed `aec_warmup_ms`. |
 | `interrupt_thinking_lockout_ms` | Int | 600 | Barge-in lockout while `thinking` (mic live, AEC has no reference yet). 0 disables. |
+| `interrupt_post_tool_lockout_ms` | Int | 900 | Barge-in lockout after a tool returns (`tool_calling` → `thinking` / `speaking`). Speech heard meanwhile still counts toward the barge-in. |
 | `aec_enabled` | Boolean | `true` | Platform acoustic echo cancellation, referencing the TTS playback output |
 | `aec_warmup_ms` | Int | 250 | Silence pumped to the speaker on start so the AEC has reference samples |
 | `aec_playback_gate_tail_ms` | Int | 80 | Sink-drain grace at end of every TTS turn |
 
-```kotlin
-enum class InterruptTrigger(val raw: String) {
-    NONE("none"),               // Never interrupt; the mic is hard-muted during playback.
-    SPEECH_ONLY("speech_only"), // Sustained user speech is enough to barge in.
-    WAKE_WORD("wake_word")      // Wake word must fire during sustained speech to confirm.
-}
-```
+The AEC fields are accepted from the Flutter config under the same
+keys.
 
-`SPEECH_ONLY` is the default. On a device with unreliable echo
-cancellation, use `NONE` so the audio engine drops mic samples while the
-speaker is playing and VAD never sees the self-echo. Android echo
-cancellation uses the platform `AcousticEchoCanceler`, which references
-the TTS playback stream (route the player with `voice_processing = true`);
-`aec_enabled` gates it.
+`InterruptMode` (`ai.thestage.qlip.voice_agent.graph`; Flutter string
+in brackets):
+
+| Mode | Barge-in when |
+|------|---------------|
+| `NONE` (`'none'`) | Never; the mic is hard-muted during playback |
+| `VAD` (`'vad'`, default) | Sustained user speech |
+| `VAD_WAKE_WORD` (`'vad_wake_word'`) | The wake word fires during sustained speech |
+| `VAD_SPEAKER_ID` (`'vad_speaker_id'`) | The enrolled speaker is verified during sustained speech |
+| `VAD_SPEAKER_ID_WAKE_WORD` (`'vad_speaker_id_wake_word'`) | Both of the above |
+
+On a running agent, `update_interrupt_config(mode = …)` takes an
+`InterruptTrigger` — `NONE`, `SPEECH_ONLY` or `WAKE_WORD` (Flutter
+`interrupt_mode: 'none' | 'speech_only' | 'wake_word'`).
+
+On a device with unreliable echo cancellation, use `NONE` so the
+audio engine drops mic samples while the speaker is playing and VAD
+never sees the self-echo. Android echo cancellation uses the platform
+`AcousticEchoCanceler` on the mic capture
+(`AudioInputConfig.voice_processing`), referencing the TTS playback;
+`aec_enabled` turns it on.
+
+### Volume
+
+The agent plays in Android's voice-call audio session, which echo
+cancellation needs, so the phone's volume keys set its loudness while
+it runs (Android shows them as the in-call volume). The SDK widens
+that range so the lowest steps are quiet. The media volume does not
+affect the agent.
 
 ### Wake-word standby
 
@@ -410,13 +582,122 @@ state between turns is `listening`.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `wake_word` | String? | `null` | HF id or local path of the wake-word bundle. Enables `sleeping` standby. |
-| `ww_threshold_score` | Double | 0.5 | Probability the wake-word classifier must reach for a positive detection. Tune per model. |
-| `ww_device` | String | `"npu"` | Wake-word compute device (see compute routing). |
+| `ww_threshold_score` (Flutter `ww_threshold`) | Double | 0.5 | Probability the wake-word classifier must reach for a positive detection. Tune per model. |
+| `ww_device` | String | `""` | Wake-word bundle class; empty = best available (see compute routing). |
+| `turn_start_mode` | `TurnStartMode` (Flutter string) | `VAD` (`'vad'`) | What leaves `sleeping`: `VAD_WAKE_WORD` (`'vad_wake_word'`) the wake word; `VAD_SPEAKER_ID_WAKE_WORD` (`'vad_speaker_id_wake_word'`) the wake word from the enrolled speaker. With `wake_word` set, `VAD` acts as `VAD_WAKE_WORD` |
+
+## Tools
+
+With the on-device LLM (`llm_provider = "local"`), the model can call
+tools in the middle of a reply: it speaks a short filler ("Let me
+check."), calls the tool, and answers from the result. The SDK runs
+the tool; the UI sees it as the `tool_calling` state and a
+`tool_started` / `tool_ended` event pair. Only the reply text is ever
+spoken or sent on `llm_deltas`: the call markup, the arguments and
+the tool's result never reach TTS.
+
+Pick the tools with `llm_tools` (missing = `voice`):
+
+| `llm_tools` | Tools |
+|-------------|-------|
+| `voice` (default), `all`, `true` | `get_weather`, `get_local_time`, `web_search`, `wikipedia_summary`, `calculate` and the `phone` tools |
+| `web`, `live` | `get_weather`, `get_local_time`, `web_search` |
+| `phone` | `open_url`, `dial_phone`, `open_maps`, `compose_sms`, `compose_email`, `copy_to_clipboard`, `get_battery` |
+| `none`, `off`, `false` | No tools |
+
+Tools need an LLM that can call them: the LFM2.5, LFM3 and Qwen3.5
+models can. An OpenAI-compatible endpoint
+(`llm_provider = "openai_compatible"`) gets no tools.
+
+**Kotlin.** Pass your own tools in `tools` (they replace the preset;
+add `DefaultTools.voice` to keep all the built-ins, or a smaller set
+such as `DefaultTools.phone`). A tool's `execute`
+receives the call and returns a short string the model reads. See
+[LLM](./llm.md) for writing tools.
+
+```kotlin
+val order_status = Tool(
+    name = "order_status",
+    description = "Delivery status for an order number. " +
+        "Use when the user asks where an order is.",
+    parameters = mapOf(
+        "type" to "object",
+        "properties" to mapOf(
+            "order_id" to mapOf("type" to "string"),
+        ),
+        "required" to listOf("order_id"),
+    ),
+    execute = { call ->
+        orders.status_json(call.arguments["order_id"] as? String ?: "")
+    },
+)
+
+val config = TheStageAgentConfig(
+    vad = "TheStageAI/silero-vad",
+    stt = "TheStageAI/thewhisper-large-v3-turbo",
+    tts = "TheStageAI/neutts-multilingual",
+    llm_provider = "local",
+    llm = "TheStageAI/LFM2.5-1.2B",
+    tools = listOf(order_status) + DefaultTools.phone,
+    system_prompt = DefaultTools.voice_system_prompt +
+        "\nYou help Acme customers.",
+)
+
+launch {
+    agent.events.collect { e ->
+        when (e.kind) {
+            TheStageAgentEvent.Kind.TOOL_STARTED ->
+                chip.show(e.data["name"] as String)
+            TheStageAgentEvent.Kind.TOOL_ENDED -> chip.hide()
+            else -> {}
+        }
+    }
+}
+```
+
+**Flutter.** Choose a built-in preset; custom tools are Kotlin only.
+
+```dart
+await agent.start(config: {
+  ...agentConfig,
+  'llm_provider': 'local',
+  'llm': 'TheStageAI/LFM2.5-1.2B',
+  // voice (default) | web | phone | none
+  'llm_tools': 'web',
+});
+agent.events.listen((e) {
+  if (e['kind'] == 'tool_started') chip.show(e['name'] as String);
+  if (e['kind'] == 'tool_ended') chip.hide();
+});
+```
+
+**Spoken filler.** The model only says something before a tool call if
+the system prompt asks it to. `DefaultTools.voice_system_prompt` does
+(its "Tool pattern (always):" block). A system prompt of your own
+without such a pattern gets the SDK's spoken-tool instruction appended
+while tools are on; keep the line "Tool pattern (always):" in your
+prompt to write the pattern yourself instead.
+
+**Barge-in.** Speaking over the agent while a tool runs cancels the
+tool and the reply (`response_done` with `interrupted: true`; the cut
+tool gets no `tool_ended`). For `interrupt_post_tool_lockout_ms` after
+a tool returns, barge-in waits so the answer can start.
+
+> **Privacy.** The `web` tools send what the user asked about over the
+> network: city names to Open-Meteo (weather, local time) and search
+> queries to DuckDuckGo and Wikipedia. The `phone` tools open other
+> apps (browser, dialer, maps, SMS and e-mail composers) with fields
+> filled in; the user confirms the call or message there. The SDK
+> never logs tool arguments or results, and `tool_started` /
+> `tool_ended` carry them only to your app. Set `llm_tools` to `none`
+> (or `phone`) to keep every request on the device.
 
 ## Events
 
 The agent emits a modality-agnostic, lifecycle-oriented event vocabulary.
-Each event is `{ kind, data }`:
+In Kotlin each event is a `TheStageAgentEvent(kind, data)`; in Dart it
+is one flat map, `{'kind': …}` plus the `data` keys below (e.g.
+`event['state']`):
 
 | `kind` | `data` keys | When |
 |--------|-------------|------|
@@ -424,7 +705,9 @@ Each event is `{ kind, data }`:
 | `user_request_partial` | `text` | A stable partial caption was committed mid-turn (streaming ASR only). UI-only; does not drive the state machine. |
 | `user_request` | `text`, `source` | A user request was finalized. `source` is `speech` (Whisper committed a turn) or `text` (a typed request via `send_request(...)`). Either way this is what drives the LLM. |
 | `response_delta` | `delta` | An LLM token arrived |
-| `response_done` | `text`, `reason`, `interrupted` | The response stream finished. `reason` is an end reason (`completed` / `interrupted` / `error` / `empty`); `interrupted` (Bool) is kept for back-compat. |
+| `response_done` | `text`, `reason`, `interrupted` | The response stream finished. `reason` is an end reason (`completed` / `interrupted` / `error` / `empty`); `interrupted` (Bool) is `true` when `reason` is `interrupted`. |
+| `tool_started` | `name`, `arguments` | The model called a [tool](#tools). `arguments` is a JSON object string. |
+| `tool_ended` | `name`, `content` | The tool returned `content` (what the model reads; never spoken). |
 | `playback_started` | — | First TTS sample reached the speaker |
 | `playback_ended` | `reason` | Speaker stopped. `reason` is `completed` (after the audio drained) or `interrupted` (barge-in). |
 | `wake_word` | `prob` | The wake-word classifier fired. `prob` is the detection score. Only emitted when `wake_word` is configured. |
@@ -440,7 +723,8 @@ the agent finished naturally (`completed`) or was cut off
 (`interrupted`), rather than overloading "TTS done".
 
 For high-frequency or fan-out friendly signals, prefer the typed
-channels (`llm_deltas`, `transcripts`, `vad_probabilities`) over parsing
+channels (`llm_deltas`, `transcripts`, `vad_probabilities`,
+`tts_levels`) over parsing
 `events`.
 
 ## Programmatic Controls
@@ -449,7 +733,8 @@ channels (`llm_deltas`, `transcripts`, `vad_probabilities`) over parsing
 agent.interrupt()                     // cancel current response
 agent.say("Hi there!")                // speak text, skip LLM (suspend)
 agent.send_request("What time is it?") // inject a typed user turn -> LLM
-agent.set_voice("dave")               // change TTS voice (suspend)
+agent.set_voice(voice_id = "dave")    // change TTS voice (suspend)
+agent.set_system_prompt("Answer in French.")
 val history = agent.history()         // List<AgentMessage>
 agent.clear_history()
 agent.update_interrupt_config(        // hot-apply on a running agent
@@ -463,32 +748,95 @@ agent.update_turn_config(             // "dnn" endpointer only; no-op otherwise
 agent.stop()                          // unload models, release audio (suspend)
 ```
 
-`update_interrupt_config(...)` and `update_turn_config(...)` are the knobs
-that can be changed on a running graph today — they forward directly to the
-live interruption / DNN-turn nodes. All other configuration is consumed
-at `start()` and changing it requires a `stop()` + new
-`TheStageVoiceAgent(config)`.
+**Flutter:**
+
+```dart
+await agent.interrupt();
+await agent.say('Hi there!');
+await agent.send_request('What time is it?');
+await agent.set_voice(voice_id: 'dave');
+await agent.set_system_prompt('Answer in French.');
+await agent.clear_history();
+await agent.update_interrupt_config(
+  interrupt_min_speech_ms: 200,
+  interrupt_mode: 'speech_only',
+);
+await agent.enroll_speaker(embedding: reference);  // null clears
+await agent.stop();
+```
+
+`update_interrupt_config(...)`, `update_turn_config(...)` (Kotlin),
+`set_voice(...)` and `set_system_prompt(...)` change a running agent.
+`set_system_prompt` applies from the next reply and keeps the history.
+All other configuration is consumed at `start()` and changing it
+requires a `stop()` + new `TheStageVoiceAgent(config)`.
 
 `send_request(text)` submits a typed turn that bypasses the mic and
 ASR: it drives the exact same LLM → TTS path as a spoken turn (the
 finalized `user_request` event carries `source = "text"`). It is a
 no-op when the agent has no LLM responder (transcription-only). In
-Flutter the same call is `agent.sendRequest(text)`.
+Flutter the same call is `agent.send_request(text)`.
+
+## Voices
+
+`set_voice` swaps the TTS voice on a running agent; it reloads the TTS
+model, so call it between turns. `stop()` waits for an in-flight
+`start()` or `set_voice()` to finish. Pass any subset of three fields —
+fields you leave out keep their current value:
+
+- **`voice_id`** picks a voice that ships in the TTS bundle (the
+  `voices` event lists them).
+- **`voice_dir`** points at a voice pack: **one folder holding a
+  `voice.json`** (yours, or a downloaded one). It wins over
+  `voice_id`. An empty `voice_dir` clears it and returns to
+  `voice_id`.
+- **`language`** switches the language while keeping the speaker. An
+  empty `language` returns to the voice's own language.
+
+```kotlin
+agent.set_voice(voice_id = "dave")
+agent.set_voice(voice_id = "dave", language = "french")
+agent.set_voice(voice_dir = packDir.path)   // your own voice pack
+agent.set_voice(voice_dir = "")             // back to the bundle voice
+```
+
+```dart
+await agent.set_voice(voice_id: 'dave', language: 'french');
+await agent.set_voice(voice_dir: packDir.path);
+await agent.set_voice(voice_dir: '');
+```
+
+To start with a voice pack or a language, set `tts_voice_dir` /
+`tts_language` in the config. `set_voice` throws (Kotlin) or completes
+with an error (Flutter) for a relative `voice_dir` (it must be an
+absolute path), a folder without `voice.json`, an unknown `voice_id`
+or language, or a failed reload; the current voice stays. If the
+previous voice cannot be restored either, the agent emits an `error`
+event and stops speaking (`speaking` capability `false`). Voice packs
+work on the multilingual NeuTTS bundles; with the English-only nano
+bundle a `voice_dir` fails the same way.
+
+A NeuTTS multilingual voice pack is a folder made offline from a
+3–10 s reference clip (see [TTS](./tts.md#voicejson-shape)); its
+`voice.json` holds `name`, `language`, `ref_text` and `ref_codes` (NeuCodec codes of the clip),
+plus optional sampling defaults (`temperature`, `top_k`,
+`min_new_tokens`, `use_lang_token`). Copy the folder to a real path on
+the device (out of app assets, or download it) and pass that path.
 
 ## Custom Nodes
 
 The agent graph is extensible: you can append your own nodes that run
 on the agent's event loop, gated by lifecycle state, exchanging values
 on named ports and reacting to the shared event bus. The SDK ships the
-**primitives** (`TheStageAgentNode`, `AgentNodeContext`, `extraNodes`);
+**primitives** (`TSAgentNode`, `AgentNodeContext`, `extra_nodes`);
 example nodes (live captions, event logs) belong in the host app.
 
-**Flutter.** Implement `TheStageAgentNode` in Dart and pass instances
-to `start(extraNodes: [...])`. Lifecycle hooks cross a native bridge by
+**Flutter.** Implement `TSAgentNode` in Dart and pass instances
+to `start(extra_nodes: [...])`. Lifecycle hooks cross a native bridge by
 string `id`:
 
 ```dart
-class EventLogNode extends TheStageAgentNode {
+class EventLogNode extends TSAgentNode {
   EventLogNode({this.onBusEvent});
   @override String get id => 'event_log';
   @override List<String> get runWhen => const [];   // empty = always open
@@ -501,7 +849,7 @@ class EventLogNode extends TheStageAgentNode {
   }
 }
 
-await agent.start(config: baseConfig, extraNodes: [EventLogNode(...)]);
+await agent.start(config: baseConfig, extra_nodes: [EventLogNode(...)]);
 ```
 
 `AgentNodeContext` carries the node's current `state`, `isGateOpen`
@@ -509,17 +857,18 @@ await agent.start(config: baseConfig, extraNodes: [EventLogNode(...)]);
 port/bus helpers:
 
 - `ctx.sendPort(name, value)` — push a value onto this node's output
-  port. It surfaces on the multiplexed `agent.portEvents` stream (and
-  `agent.subscribePort('$id.$name')`) as `{port: "$id.$name", value}`.
+  port. It surfaces on the multiplexed `agent.port_events` stream (and
+  `agent.subscribe_port('$id.$name')`) as `{port: "$id.$name", value}`.
 - `ctx.recvPort(name)` — `Stream<String>` of values sent to this node's
   named port.
 - `ctx.publishEvent(event)` — inject a bus event. Supported today:
   `{'kind': 'USER_REQUEST', 'text': '...'}` (optional `'source'`:
   `speech` \| `text` \| `system`), which drives the LLM → TTS path as if
-  the user spoke. This is the node-scoped form of `sendRequest`.
+  the user spoke. This is the node-scoped form of `send_request`.
 
 Gate heavy work (e.g. a local VLM) to **non-active** states by setting
-`runWhen` to quiet states — treat `thinking` and `speaking` as active,
+`runWhen` to quiet states — treat `thinking`, `tool_calling` and
+`speaking` as active,
 and prefer `idle` / `sleeping` / `listening` so you don't contend with
 ASR / LLM / TTS for the NPU.
 
@@ -601,3 +950,22 @@ loop; the orchestrator is just an event router and never sits on the hot
 path. If you build your own orchestrator on top of these APIs, don't
 wrap inference calls in `withContext(Dispatchers.Main) { ... }`; that
 re-introduces the very serialization this design avoids.
+
+## Upgrading from 1.0.x
+
+- Every `*_device` field defaults to `""`, the best available bundle
+  (they were `"npu"` / `"cpu"`). A 1.0.x config that forces `"npu"`
+  fails for components that publish only a CPU bundle, such as VAD —
+  drop those overrides.
+- `set_voice` reports failures (see [Voices](#voices)); in 1.0.x
+  `setVoice` errors were swallowed.
+- The Dart names `TheStageVoiceAgentFlutter`, `TheStageAgentNode`,
+  `TheStageAgentState`, `TheStageAudioPlayer` and camelCase members
+  such as `llmDeltas` or `setVoice` still compile as deprecated
+  aliases of `TSVoiceAgent`, `TSAgentNode`, `TSAgentState`,
+  `TSAudioPlayer` and the snake_case names on this page.
+- The Flutter config keys `turn_detection_mode` and
+  `allow_interruptions: false` are still read, as `turn_end_mode` and
+  `interrupt_mode: 'none'`. In Kotlin, `turn_detection_mode`,
+  `interrupt_trigger` and `allow_interruptions` are read-only
+  properties derived from `turn_end_mode` and `interrupt_mode`.

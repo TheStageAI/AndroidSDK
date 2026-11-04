@@ -30,8 +30,7 @@ double? maxOf(List<double> xs) {
 // BenchRecord
 // ----------------------------------------------------------------------
 /// One benchmark summary. Only the keys relevant to [kind] are set; the
-/// rest stay out of the JSON. Mirrors the metric surface of the iOS
-/// EngineBench (`llm` / `tts` / `asr` / `vlm`).
+/// rest stay out of the JSON. [kind] is `llm` / `tts` / `asr` / `vlm`.
 class BenchRecord {
   BenchRecord({
     required this.kind,

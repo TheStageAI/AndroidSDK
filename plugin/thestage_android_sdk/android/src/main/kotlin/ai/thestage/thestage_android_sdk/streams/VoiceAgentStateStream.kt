@@ -1,6 +1,7 @@
 package ai.thestage.thestage_android_sdk.streams
 
 import ai.thestage.qlip.voice_agent.InterruptTrigger
+import ai.thestage.qlip.voice_agent.TheStageAgentCapabilities
 import ai.thestage.qlip.voice_agent.TheStageAgentConfig
 import ai.thestage.qlip.voice_agent.TheStageVoiceAgent
 import ai.thestage.qlip.voice_agent.graph.InterruptMode
@@ -86,7 +87,10 @@ class VoiceAgentStateStream(
 
     // Lifecycle
     // ------------------------------------------------------------------
-    suspend fun start(config: Map<String, Any?>) {
+    /** Start the agent and return its capabilities payload
+     *  ([TheStageAgentCapabilities.to_map]). A failed start leaves
+     *  nothing running. */
+    suspend fun start(config: Map<String, Any?>): Map<String, Any?> {
         // Tear down any agent still running so we never have two live
         // graphs capturing the mic at once - two graphs means two ASR
         // nodes transcribing the same utterance, i.e. doubled replies.
@@ -113,9 +117,21 @@ class VoiceAgentStateStream(
             }
         }
 
-        agent.start()
+        try {
+            agent.start()
+        } catch (e: Throwable) {
+            stop()
+            throw e
+        }
         __port_stream?.bind(agent)
+        return capabilities_payload()
     }
+
+    /** Capabilities of the running agent (all `false` with reasons
+     *  when none runs). */
+    fun capabilities_payload(): Map<String, Any?> =
+        (__agent?.capabilities ?: TheStageAgentCapabilities.EMPTY)
+            .to_map()
 
     suspend fun stop() {
         __event_job?.cancel()
@@ -135,8 +151,22 @@ class VoiceAgentStateStream(
         __agent?.say(text)
     }
 
-    suspend fun set_voice(voice: String) {
-        __agent?.set_voice(voice)
+    /** Any subset of [voice_id] / [voice_dir] / [language]; `null`
+     *  keeps the current value. */
+    suspend fun set_voice(
+        voice_id: String?,
+        voice_dir: String?,
+        language: String?,
+    ) {
+        __agent?.set_voice(
+            voice_id = voice_id,
+            voice_dir = voice_dir,
+            language = language,
+        )
+    }
+
+    fun set_system_prompt(prompt: String) {
+        __agent?.set_system_prompt(prompt)
     }
 
     fun clear_history() {
@@ -226,6 +256,15 @@ class VoiceAgentStateStream(
             llm_api_key = dict["llm_api_key"] as? String ?: "",
         )
 
+        // Built-in tools of the on-device LLM (Apple's mapping):
+        // none|off|false, web|live, phone, voice|all|true; absent
+        // = voice. An OpenAI-compatible endpoint gets none.
+        config = config.copy(
+            llm_tools = TheStageAgentConfig.llm_tools_of(
+                dict["llm_tools"]
+            )
+        )
+        // Absent: the default, DefaultTools.voice_system_prompt.
         (dict["system_prompt"] as? String)?.let {
             config = config.copy(system_prompt = it)
         }
@@ -238,6 +277,15 @@ class VoiceAgentStateStream(
 
         (dict["tts_voice"] as? String)?.let {
             config = config.copy(tts_voice = it)
+        }
+        (dict["tts_voice_dir"] as? String)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { config = config.copy(tts_voice_dir = it) }
+        (dict["tts_language"] as? String)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { config = config.copy(tts_language = it) }
+        (dict["require_full_stack"] as? Boolean)?.let {
+            config = config.copy(require_full_stack = it)
         }
         __as_double(dict["vad_threshold"])?.let {
             config = config.copy(vad_threshold = it)
@@ -278,6 +326,10 @@ class VoiceAgentStateStream(
         __as_int(dict["interrupt_thinking_lockout_ms"])?.let {
             config =
                 config.copy(interrupt_thinking_lockout_ms = it)
+        }
+        __as_int(dict["interrupt_post_tool_lockout_ms"])?.let {
+            config =
+                config.copy(interrupt_post_tool_lockout_ms = it)
         }
         __as_int(dict["pre_roll_ms"])?.let {
             config = config.copy(pre_roll_ms = it)
@@ -356,6 +408,8 @@ class VoiceAgentStateStream(
         (dict["llm_revision"] as? String)?.let {
             config = config.copy(llm_revision = it)
         }
+        // Devices: absent or "" = best available for the model on
+        // this SoC (the SDK default); "npu" / "cpu" constrain it.
         (dict["llm_device"] as? String)?.let {
             config = config.copy(llm_device = it)
         }
@@ -424,6 +478,14 @@ class VoiceAgentStateStream(
         (dict["speaker_id_device"] as? String)?.let {
             config = config.copy(speaker_id_device = it)
         }
+        // The app sends this and it was being dropped here, so
+        // the Kotlin default won and the speaker model resolved
+        // its pinned commit no matter what the app asked for --
+        // silently, because a missing key is indistinguishable
+        // from an unset one.
+        (dict["speaker_id_revision"] as? String)?.let {
+            config = config.copy(speaker_id_revision = it)
+        }
         __as_double(dict["speaker_similarity_threshold"])?.let {
             config = config.copy(speaker_similarity_threshold = it)
         }
@@ -434,9 +496,15 @@ class VoiceAgentStateStream(
             config = config.copy(auto_listen = it)
         }
 
-        // aec_warmup_ms / aec_playback_gate_tail_ms are intentionally
-        // NOT parsed from the channel: they stay internal SDK defaults
-        // (matching iOS, which keeps them as config fields only).
+        // AEC tuning (the voice apps' sliders). Both are plain
+        // TheStageAgentConfig fields; absent keys keep the SDK
+        // defaults.
+        __as_int(dict["aec_warmup_ms"])?.let {
+            config = config.copy(aec_warmup_ms = it)
+        }
+        __as_int(dict["aec_playback_gate_tail_ms"])?.let {
+            config = config.copy(aec_playback_gate_tail_ms = it)
+        }
 
         // Custom graph nodes bridged to Dart. Each descriptor becomes a
         // FlutterBridgeNode forwarding its lifecycle over the nodes

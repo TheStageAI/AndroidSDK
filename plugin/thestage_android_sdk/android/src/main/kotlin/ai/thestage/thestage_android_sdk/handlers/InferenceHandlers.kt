@@ -123,3 +123,61 @@ internal fun TheStageFlutterPlugin.__handle_stop_stream(
     __stream_handler?.cancel(stream_id = stream_id)
     result.success(null)
 }
+
+// ----------------------------------------------------------------------
+// Streaming input (push INTO a live infer_stream session)
+// ----------------------------------------------------------------------
+/**
+ * Shared body for the three streaming-input routes. Each takes
+ * `{model_name, input_json?}` and forwards to the matching
+ * [TheStageAI] call on the model's own executor.
+ *
+ * Only models whose streaming path accepts input after the
+ * stream opens support these — ASR today; everything else
+ * answers with an error the Dart side surfaces as-is.
+ */
+@Suppress("UNCHECKED_CAST")
+private fun TheStageFlutterPlugin.__handle_stream_input(
+    call: MethodCall,
+    result: MethodChannel.Result,
+    body: suspend (String, Map<String, Any?>) -> Unit,
+) {
+    val args = call.arguments as? Map<String, Any?>
+    val model_name = args?.get("model_name") as? String
+    if (model_name == null) {
+        __fail(result, "Missing model_name.")
+        return
+    }
+    val input_json =
+        (args["input_json"] as? Map<String, Any?>) ?: emptyMap()
+
+    __scope.launch(Dispatchers.Default) {
+        try {
+            body(model_name, input_json)
+            withContext(Dispatchers.Main) { result.success(null) }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { __fail(result, e) }
+        }
+    }
+}
+
+internal fun TheStageFlutterPlugin.__handle_stream_append(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) = __handle_stream_input(call, result) { model_name, input_json ->
+    TheStageAI.stream_append(model_name, input_json)
+}
+
+internal fun TheStageFlutterPlugin.__handle_stream_finish(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) = __handle_stream_input(call, result) { model_name, input_json ->
+    TheStageAI.stream_finish(model_name, input_json)
+}
+
+internal fun TheStageFlutterPlugin.__handle_stream_cancel(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) = __handle_stream_input(call, result) { model_name, input_json ->
+    TheStageAI.stream_cancel(model_name, input_json)
+}

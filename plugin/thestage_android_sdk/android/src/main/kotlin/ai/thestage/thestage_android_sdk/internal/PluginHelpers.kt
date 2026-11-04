@@ -56,6 +56,14 @@ internal fun __encode_status(
         // populate voice pickers without scanning the
         // engine cache themselves.
         status.voices?.let { put("voices", it) }
+        // The voices whose MTP draft is usable (NeuTTS
+        // multilingual): an app gates its MTP toggle on it.
+        status.mtp_voices?.let { put("mtp_voices", it) }
+        // LLM / VLM generation features ("mtp", "thinking"):
+        // apps show a switch only for a supported one.
+        status.features?.let { f ->
+            put("features", f.mapValues { it.value.to_map() })
+        }
     }
 }
 
@@ -93,6 +101,7 @@ internal fun __chunk_to_event(
         out["tokens_per_second"] = it
     }
     chunk.total_seconds?.let { out["total_seconds"] = it }
+    chunk.stop_reason?.let { out["stop_reason"] = it }
     chunk.vision_ms?.let { out["vision_ms"] = it }
     chunk.projector_ms?.let {
         out["projector_ms"] = it
@@ -102,6 +111,31 @@ internal fun __chunk_to_event(
     chunk.image_tokens?.let {
         out["image_tokens"] = it
     }
+    // Diarization / multispeaker payloads. Each is a list of plain
+    // maps so the standard codec carries them without a custom
+    // writer, and each is omitted when absent rather than sent as
+    // null — a Dart `containsKey` then distinguishes "this chunk is
+    // not about speakers" from "no speakers found".
+    chunk.stage_profile?.let { out["stage_profile"] = it }
+    chunk.segments?.let { segs ->
+        out["segments"] = segs.map { it.to_map() }
+    }
+    chunk.turns?.let { turns ->
+        out["turns"] = turns.map { it.to_map() }
+    }
+    chunk.voices?.let { voices ->
+        out["voices"] = voices.map { it.to_map() }
+    }
+    // LLM tool streams: `tool_call` / `tool_result` name the
+    // tool, and `final` carries the reply's parts. Plain maps and
+    // lists, which the standard codec carries as they are.
+    chunk.name?.let { out["name"] = it }
+    chunk.arguments?.let { out["arguments"] = it }
+    chunk.content?.let { out["content"] = it }
+    chunk.raw_text?.let { out["raw_text"] = it }
+    chunk.final_text?.let { out["final_text"] = it }
+    chunk.tool_calls?.let { out["tool_calls"] = it }
+    chunk.thinking?.let { out["thinking"] = it }
     return out
 }
 
@@ -139,7 +173,13 @@ internal fun __fail(
         return
     }
     val msg = error.message ?: error.toString()
-    val sdk_code = TheStageAI.last_error_code
+    // CONSUME the code: it describes this failure only. Reading
+    // it without clearing made it stick, so after one
+    // INSUFFICIENT_STORAGE every later uncoded failure reached
+    // the app as a storage error. The coded thrower already
+    // recorded its own message, which is why nothing is lost by
+    // recording only in the uncoded branch.
+    val sdk_code = TheStageAI.take_error_code()
     if (sdk_code == null) {
         TheStageAI.record_error(msg)
     }
@@ -178,7 +218,9 @@ internal fun __stream_error_payload(
             ?: error::class.simpleName
             ?: "stream error"),
     )
-    TheStageAI.last_error_code?.let {
+    // Consumed, as in __fail: a stale code on a stream error is
+    // the same bug reported through a different channel.
+    TheStageAI.take_error_code()?.let {
         payload["error_code"] = it
     }
     return payload
@@ -187,12 +229,22 @@ internal fun __stream_error_payload(
 // Progress
 // ----------------------------------------------------------------------
 /**
- * Model download/preparation progress → Dart event. A real fraction
- * (>= 0) rides on `progress`; a negative delivery-layer sentinel
- * becomes a `status`-only event (an AI-pack fetch parked on the
- * network/user) so the app never sees a bogus negative number. A
- * waiting event carries `status` and no `progress`; a progress event
- * carries `progress` and no `status`.
+ * Model download/preparation progress → Dart event.
+ *
+ * `phase` is always present and is the signal. The other two keys
+ * are conditional:
+ *
+ *  - `progress` (0..1) rides along only while a transfer is
+ *    measurable. `extracting` and `loading` have no measurable
+ *    progress, so they omit it rather than repeat a frozen number.
+ *  - `status` marks an AI-pack fetch parked on the network or the
+ *    user, which is a delivery state and not progress at all.
+ *
+ * Both are keyed off [LoadProgress.phase]. They used to be keyed
+ * off a negative fraction, which made the `status` branch dead
+ * code: the runner clamped the sentinels to 0.0 before they could
+ * ever arrive here, so a parked download reached apps as a
+ * transfer stuck at 0%.
  */
 internal fun __load_progress_event(
     model_name: String,
@@ -203,10 +255,24 @@ internal fun __load_progress_event(
         "model" to event.model,
         "phase" to event.phase.raw_value,
     )
-    when (event.fraction) {
-        -1.0 -> map["status"] = "waiting_for_wifi"
-        -2.0 -> map["status"] = "waiting_for_confirmation"
-        else -> map["progress"] = event.fraction
+    when (event.phase) {
+        ai.thestage.qlip.utils.LoadProgress.Phase
+            .WAITING_FOR_WIFI ->
+            map["status"] = "waiting_for_wifi"
+        ai.thestage.qlip.utils.LoadProgress.Phase
+            .WAITING_FOR_CONFIRMATION ->
+            map["status"] = "waiting_for_confirmation"
+        // Omitted, not sent as null, when this phase has no
+        // measurable progress -- so a Dart `containsKey` tells
+        // "no progress to report" from "reported as zero".
+        else -> event.fraction?.let { map["progress"] = it }
     }
+    // Byte counters when the server declared a size. Omitted
+    // rather than sent as null, so a Dart `containsKey` is
+    // enough to tell "not measured" from "measured as zero".
+    event.downloaded_bytes?.let {
+        map["downloaded_bytes"] = it
+    }
+    event.total_bytes?.let { map["total_bytes"] = it }
     return map
 }

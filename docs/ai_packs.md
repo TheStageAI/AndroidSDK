@@ -8,8 +8,8 @@ Hugging Face download.
 What you get: Play hosts the models for free inside your AAB,
 pre-downloads them right after install (fast-follow) or on first
 use (on-demand), serves each phone only the variant matching its
-SoC, and delta-patches across app updates. The SDK API is
-unchanged — only the `engines_path` string differs.
+SoC, and delta-patches across app updates. The SDK API is the same
+as for HF delivery — only the `engines_path` string differs.
 
 ---
 
@@ -29,9 +29,9 @@ declare an HF fallback so sideloaded installs still work (§6).
 Decision matrix per model:
 
 - **Large NPU model (100 MB+)** → AI pack, `on-demand` (+ optional
-  first-launch `prefetch_model`), or `fast-follow` +
-  `aipack_keep_pack: true` when the model must be ready in the
-  first seconds after install.
+  first-launch `prefetch_model`), or `fast-follow` (declared with
+  `aipack_delivery: 'fast_follow'`) when the model must be ready in
+  the first seconds after install.
 - **Small CPU-only model (a few MB — silero-vad, smart-turn, ...)**
   → skip packs entirely: bundle the `engines.zip` as an ordinary
   app asset, copy it once to app storage at first run, and pass
@@ -112,6 +112,14 @@ your-app/
 
 Drop each per-SoC zip into its
 `<packName>#group_<soc>/` directory under the name `engines.zip`.
+
+Some models publish **one** bundle that serves several SoCs
+instead of one per chip; TheStage then provides that single zip
+with the list of SoCs it serves. Create a group for every SoC in
+that list and put the **same** `engines.zip` in each. A group is a Play
+routing destination, not a distinct build, so repeating one bundle
+across groups is expected — it is how Play is told that those
+devices all take it.
 The asset dir is **named after the pack** — required as soon as
 the AAB carries more than one pack: packs are built
 fusing-enabled, so bundletool rejects identical bare paths across
@@ -184,7 +192,8 @@ await TheStageFlutterSDK.start_model(
 );
 ```
 
-`aipack_keep_pack` / `aipack_fallback_repo` are meaningless here
+`aipack_delivery`, `aipack_keep_pack` and the fallback keys are
+meaningless here
 (the pack is part of the APK and present on every install,
 including sideloads of a universal APK). The release tag works the
 same as §6: bump it only when the model files change, and app
@@ -251,10 +260,10 @@ await TheStageFlutterSDK.start_model(
     // extracted model with zero downloads.
     'aipack_release_tag': 'whisper-0.2.3',
 
-    // true  -> keep Play's copy after extraction.
-    //          REQUIRED for fast-follow packs.
-    // false -> release it (default; on-demand packs only).
-    'aipack_keep_pack': false,
+    // How the pack is declared in its build.gradle:
+    // 'on_demand' (default), 'fast_follow' or 'install_time'.
+    // Decides whether Play's copy is kept after extraction.
+    'aipack_delivery': 'on_demand',
 
     // Optional: sideloads / unmatched devices / fetch
     // failures fall back to the normal HF download.
@@ -264,26 +273,35 @@ await TheStageFlutterSDK.start_model(
 );
 ```
 
+| Config key | Default | Meaning |
+|---|---|---|
+| `aipack_release_tag` | — | Release tag of the bundles in the pack. A new tag re-fetches and re-extracts once; an unchanged tag reuses the extracted model |
+| `aipack_delivery` | `on_demand` | The pack's delivery type: `on_demand`, `fast_follow` or `install_time`. Sets whether Play's copy is kept after extraction: kept for `fast_follow`, released for `on_demand` |
+| `aipack_keep_pack` | from `aipack_delivery` | Overrides the keep/release decision of `aipack_delivery` (`true` keeps Play's copy). Leave it unset |
+| `aipack_park_grace_ms` | `45000` | How long a fetch may stay parked (waiting for Wi-Fi or for the user's confirmation, see §7) before the SDK gives up on the pack and takes the fallback, or fails the load when there is none. Raise it when your app shows its own "waiting for Wi-Fi" UI and wants to wait |
+| `aipack_fallback_repo` | — | HF repo to download instead when the pack is unavailable: a sideload, a device Play did not match, a fetch that failed or stayed parked past the grace. A full storage volume never falls back |
+| `aipack_fallback_revision` | the pin | Commit or branch for the fallback repo. Leave it unset to use the commit this SDK pins for that repo |
+
 Download progress arrives on the same progress stream as HF
 downloads (0..1 fraction).
 
 Rules of thumb:
 
-- `on-demand` + `aipack_keep_pack: false` — default. 1x disk;
+- `on-demand` (`aipack_delivery: 'on_demand'`) — default. 1x disk;
   the Play copy is released after extraction; re-downloads happen
   only when `aipack_release_tag` changes.
-- `fast-follow` + `aipack_keep_pack: true` — best first-open UX
-  (model is on the phone before first launch), costs 2x disk.
+- `fast-follow` (`aipack_delivery: 'fast_follow'`) — best first-open
+  UX (model is on the phone before first launch), costs 2x disk
+  because Play's copy is kept.
 
-Why fast-follow requires `keep_pack: true`: fast-follow is a
+Why a fast-follow pack is kept: fast-follow is a
 *declarative* contract — "Play, keep this pack present on the
 device". Play honors it not just at install but at every app
 update: if the pack is missing at update time (because the SDK
 removed it), Play re-syncs to the declared state and re-downloads
 the whole pack — even when its content did not change. Removing a
 fast-follow pack therefore buys nothing (Play restores it) and
-costs a full pack download on every update (verified on a Play
-internal test track). With `keep_pack: true` the kept copy is
+costs a full pack download on every update. Kept, the copy is
 delta-patched across updates instead. If the 2x disk bothers you,
 the right lever is switching the pack to `on-demand`, where
 removal sticks — not removing a fast-follow pack.
@@ -314,9 +332,7 @@ path — it stages the archive from the APK's assets once per
 release tag). Keep the pack's asset dir named after the pack
 (`<packName>#group_<soc>/engines.zip`) so several install-time
 packs can coexist — the pack-named dir is REQUIRED for
-install-time packs (the bare `engines/` layout is only for
-on-demand/fast-follow, whose files arrive at a private per-pack
-location). Small models with NO per-SoC variants don't need a
+install-time packs. Small models with NO per-SoC variants don't need a
 pack at all — see the §1 decision matrix.
 
 ## 7. Large downloads off Wi-Fi / metered networks
@@ -332,8 +348,9 @@ a fetch can park instead of running:
 
 The SDK surfaces both as a `status` on the progress stream so your
 app can react instead of showing a spinner that looks hung
-(`progress` goes negative and should be ignored while `status` is
-set):
+(a parked event carries `status` and **no** `progress` key at all,
+so there is nothing to ignore — just do not assume `progress` is
+there):
 
 ```dart
 TheStageFlutterSDK.on_progress.listen((e) {
@@ -345,7 +362,10 @@ TheStageFlutterSDK.on_progress.listen((e) {
       // Ask the user to connect to Wi-Fi.
       _showWaitingForWifi();
     default:
-      _showProgress(e['progress'] as double); // 0..1
+      // Absent on extracting / loading: show an
+      // indeterminate indicator rather than 0.
+      final p = e['progress'] as num?;
+      if (p == null) _showIndeterminate(); else _showProgress(p);
   }
   // A waiting event carries `status` and no `progress`; a
   // progress event carries `progress` and no `status`.
@@ -355,8 +375,7 @@ TheStageFlutterSDK.on_progress.listen((e) {
 ### Showing Play's cellular confirmation dialog
 
 The confirmation dialog is an Activity UI flow, so trigger it from
-your app (not the SDK). Two setup requirements (both verified on a
-Flutter app):
+your app (not the SDK). Two setup requirements:
 
 1. **Declare the dependency in your app** — the plugin ships
    ai-delivery as `implementation` (runtime only), so your app
@@ -404,7 +423,7 @@ onboarding (`prefetch_model` with the `aipack://` path) so the
 model is already present before the user needs it.
 
 Normal download progress arrives on the same stream (0..1), same
-as HF downloads — verified end-to-end on a Play internal track.
+as HF downloads.
 
 ## 7b. Availability check
 
@@ -502,8 +521,8 @@ Everything above assembled for a single on-demand model
 ### File tree
 ```
 my-app/
-├── settings.gradle.kts
 ├── android/                         # (Flutter app's android/)
+│   ├── settings.gradle.kts
 │   ├── gradle.properties
 │   ├── app/
 │   │   ├── build.gradle.kts
@@ -520,7 +539,7 @@ my-app/
 └── lib/main.dart
 ```
 
-### settings.gradle.kts
+### android/settings.gradle.kts
 ```kotlin
 plugins {
     id("com.android.application") version "8.10.1" apply false
@@ -529,12 +548,12 @@ plugins {
 include(":app", ":thestageai_models_whisper")
 ```
 
-### gradle.properties
+### android/gradle.properties
 ```
 android.experimental.enableDeviceTargetingConfigApi=true
 ```
 
-### thestageai_models_whisper/build.gradle.kts
+### android/thestageai_models_whisper/build.gradle.kts
 ```kotlin
 plugins { id("com.android.ai-pack") }
 aiPack {
@@ -543,7 +562,7 @@ aiPack {
 }
 ```
 
-### app/build.gradle.kts (relevant parts)
+### android/app/build.gradle.kts (relevant parts)
 ```kotlin
 android {
     assetPacks += listOf(":thestageai_models_whisper")
@@ -558,7 +577,7 @@ dependencies {
 }
 ```
 
-### app/device_targeting_config.xml
+### android/app/device_targeting_config.xml
 ```xml
 <config:device-targeting-config
     xmlns:config="http://schemas.android.com/apk/config">
@@ -613,15 +632,19 @@ Future<void> loadWhisper() async {
       setDownloadLabel('Confirm mobile-data download…');
     } else {
       _dialogShown = false;
-      setDownloadProgress(e['progress'] as double); // 0..1, present
-    }                                                // on progress events
+      // Sent only while downloading; null elsewhere.
+      setDownloadProgress(e['progress'] as num?);
+    }
   });
 
   await TheStageFlutterSDK.start_model(
     model_type: 'whisper',
     model_name: 'whisper',
     engines_path: 'aipack://thestageai_models_whisper',
-    config: {'aipack_release_tag': 'whisper-1.0.0'},
+    config: {
+      'aipack_release_tag': 'whisper-0.2.3',
+      'aipack_delivery': 'on_demand',
+    },
   );
   // Model ready on the NPU. On cellular: fetch parks → dialog →
   // approve → resumes → loads. On Wi-Fi: downloads → loads.

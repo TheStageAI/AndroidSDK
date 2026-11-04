@@ -19,7 +19,7 @@ import 'widgets/transcript_area.dart';
 //   • creates / disposes the controller,
 //   • rebuilds the tree when the controller notifies (one AnimatedBuilder),
 //   • routes button taps to controller commands,
-//   • builds the start config and stages the bundled turn-detector asset.
+//   • builds the start config from the settings.
 //
 // Layout:
 //   AppBar ............. title + settings + status dot
@@ -35,7 +35,7 @@ class VoiceChatScreen extends StatefulWidget {
     required this.openAIKey,
   });
 
-  final TheStageVoiceAgentFlutter agent;
+  final TSVoiceAgent agent;
   final VoiceAgentSettings settings;
   final String openAIKey;
 
@@ -44,8 +44,12 @@ class VoiceChatScreen extends StatefulWidget {
 }
 
 class _VoiceChatScreenState extends State<VoiceChatScreen> {
-  late final VoiceAgentController _controller =
-      VoiceAgentController(widget.agent);
+  // The TTS bundle's voices (agent `voices` event) feed the voice picker.
+  late final VoiceAgentController _controller = VoiceAgentController(
+    widget.agent,
+    onVoices: (voices, current) =>
+        widget.settings.applyBundleVoices(voices, current: current),
+  );
   final _scrollController = ScrollController();
 
   @override
@@ -84,18 +88,13 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
   }
 
   Future<void> _toggleRun() async {
+    // The controller catches start / stop failures and shows them in
+    // the error banner, so these awaits do not throw.
     if (_controller.isRunning) {
-      _controller.stop();
+      await _controller.stop();
       return;
     }
-    final config = widget.settings.toConfig(widget.openAIKey);
-    // turn_detector engines: an HF repo, or a local bundle via
-    // --dart-define=TURN_DETECTOR_ENGINES_PATH. Used only when mode is dnn.
-    config['turn_detector'] = const String.fromEnvironment(
-      'TURN_DETECTOR_ENGINES_PATH',
-      defaultValue: 'TheStageAI/smart-turn-v3',
-    );
-    _controller.start(config);
+    await _controller.start(widget.settings.toConfig(widget.openAIKey));
   }
 
   @override

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../backend/settings_model.dart';
 
 // ============================================================================
-// FRONTEND — compact model pickers (iOS inset grouped style)
+// FRONTEND — compact model pickers (inset grouped list)
 // ============================================================================
 class ModelPickerBar extends StatelessWidget {
   const ModelPickerBar({
@@ -25,72 +25,39 @@ class ModelPickerBar extends StatelessWidget {
     final s = settings;
     final scheme = Theme.of(context).colorScheme;
 
-    final llmValue = s.useLocalBundles ? s.localLlmBundle : s.llmModel;
-    final llmOptions = s.useLocalBundles
-        ? VoiceAgentSettings.availableLocalLlms
-        : VoiceAgentSettings.availableHfLlms;
-
-    final asrValue = s.useLocalBundles ? s.localSttBundle : s.sttRepo;
-    final asrOptions = s.useLocalBundles
-        ? VoiceAgentSettings.availableLocalAsr
-        : VoiceAgentSettings.availableHfAsr;
-
-    final ttsValue = s.useLocalBundles ? s.localTtsBundle : s.ttsRepo;
-    final ttsOptions = s.useLocalBundles
-        ? VoiceAgentSettings.availableLocalTts
-        : VoiceAgentSettings.availableHfTts;
-
     final rows = <Widget>[
       if (s.llmProvider == 'local')
         _PickerRow(
           label: 'LLM',
-          value: llmValue,
-          options: llmOptions,
+          value: s.llmModel,
+          options: VoiceAgentSettings.availableHfLlms,
           enabled: enabled,
           shortLabel: true,
           short: _short,
-          onChanged: (v) => s.update((x) {
-            if (x.useLocalBundles) {
-              x.localLlmBundle = v;
-            } else {
-              x.llmModel = v;
-            }
-          }),
+          onChanged: (v) => s.update((x) => x.llmModel = v),
         ),
       _PickerRow(
         label: 'ASR',
-        value: asrValue,
-        options: asrOptions,
+        value: s.sttRepo,
+        options: VoiceAgentSettings.availableHfAsr,
         enabled: enabled,
         shortLabel: true,
         short: _short,
-        onChanged: (v) => s.update((x) {
-          if (x.useLocalBundles) {
-            x.localSttBundle = v;
-          } else {
-            x.sttRepo = v;
-          }
-        }),
+        onChanged: (v) => s.update((x) => x.sttRepo = v),
       ),
       _PickerRow(
         label: 'TTS',
-        value: ttsValue,
-        options: ttsOptions,
+        value: s.ttsRepo,
+        options: VoiceAgentSettings.availableHfTts,
         enabled: enabled,
         shortLabel: true,
         short: _short,
-        onChanged: (v) => s.update((x) {
-          if (x.useLocalBundles) {
-            x.selectLocalTtsBundle(v);
-          } else {
-            x.selectTtsRepo(v);
-          }
-        }),
+        onChanged: (v) => s.update((x) => x.selectTtsRepo(v)),
       ),
       _PickerRow(
         label: 'Voice',
         value: s.ttsVoice,
-        options: s.voicesForSelectedTts,
+        options: s.voices,
         enabled: enabled,
         shortLabel: false,
         short: _short,

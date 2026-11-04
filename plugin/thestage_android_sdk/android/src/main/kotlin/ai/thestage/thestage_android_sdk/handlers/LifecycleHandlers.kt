@@ -28,6 +28,9 @@ internal fun TheStageFlutterPlugin.__handle_initialize(
     val args = call.arguments as? Map<String, Any?>
     val api_token = (args?.get("api_token") as? String)
         ?.takeIf { it.isNotEmpty() }
+    // Optional; memory-only in the SDK, never logged here.
+    val hf_token = (args?.get("hf_token") as? String)
+        ?.takeIf { it.isNotEmpty() }
 
     // initialize is now suspend AND validates the token
     // during init (mirrors iOS initialize(apiToken:)), so a
@@ -96,7 +99,9 @@ internal fun TheStageFlutterPlugin.__handle_initialize(
             // iOS initialize(apiToken:)); a bad token throws
             // TokenValidationFailed, surfaced to Dart via
             // result.error so Dart's initialize() throws too.
-            TheStageAI.initialize(api_token = api_token)
+            TheStageAI.initialize(
+                api_token = api_token, hf_token = hf_token,
+            )
 
             withContext(Dispatchers.Main) {
                 result.success(null)
@@ -131,10 +136,21 @@ internal fun TheStageFlutterPlugin.__handle_start_model(
     }
 
     val model_type = args["model_type"] as? String
-    val device = args["device"] as? String ?: "gpu"
+    // Empty, not "gpu": empty means "best available for this
+    // model on this device", and `device` is now a CONSTRAINT the
+    // SDK fails on rather than advice it may ignore. "gpu" was
+    // never a real selection anyway -- it is unsupported and fell
+    // through to the CPU execution provider, so this default is
+    // what kept every Flutter caller off the NPU for any engine
+    // whose metadata declared no device.
+    val device = args["device"] as? String ?: ""
     val devices = __parse_devices(args["devices"])
     val config = args["config"] as? Map<String, Any?>
-    val revision = args["revision"] as? String ?: "main"
+    // Blank, not "main": blank defers to the pinned commit for
+    // this repo. Defaulting to "main" here would make every
+    // Flutter caller an explicit pin override, pointing the
+    // SDK at a branch head that can move under a shipped app.
+    val revision = args["revision"] as? String ?: ""
 
     // The progress EventChannel now emits the structured
     // LoadProgress (phase / fraction / model) map.

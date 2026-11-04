@@ -22,7 +22,6 @@ TheStageAI.start_model(
     model_name = "tts",
     engines_path = "TheStageAI/neutts-multilingual",
     config = mapOf("voice_id" to "dave"),
-    revision = "android"
 )
 
 TheStageAI.infer_stream(
@@ -96,13 +95,13 @@ everything queued and buffered has actually played out.
 Feed text incrementally as it arrives from another model. The streamer
 splits sentences internally and produces audio as complete sentences are
 ready. Use `TheStageAI.open_tts_streamer(model_name)` to pull a fresh
-streamer per turn — there is no need (or way) to construct `TTSStreamer`
-directly from outside the SDK module.
+streamer per turn — there is no need to construct `TTSStreamer`
+yourself.
 
 ```kotlin
 TheStageAI.start_model(
     model_name = "llm",
-    engines_path = "TheStageAI/Qwen3-0.6B"
+    engines_path = "TheStageAI/LFM2.5-1.2B"
 )
 TheStageAI.start_model(
     model_name = "tts",
@@ -157,7 +156,7 @@ final stream = TheStageFlutterSDK.infer_stream(
   input_json: {'text': 'A long paragraph of text to speak aloud.'},
 );
 
-final player = TheStageAudioPlayer(sampleRate: 24000);
+final player = TSAudioPlayer(sampleRate: 24000);
 await player.start();
 
 await for (final chunk in stream) {
@@ -177,11 +176,11 @@ await player.stop();
 ```dart
 final ttsStream = TheStageFlutterSDK.infer_stream(
   model_name: 'tts',
-  input_json: {'text': ''},
+  input_json: {'stream_mode': 'push'},
   stream_id: 'voice_agent_tts',
 );
 
-final player = TheStageAudioPlayer(sampleRate: 24000);
+final player = TSAudioPlayer(sampleRate: 24000);
 await player.start();
 
 ttsStream.listen((chunk) {
@@ -240,9 +239,10 @@ val finalText = asr.finish()               // authoritative transcript
 
 It re-decodes the growing buffer on a single serial worker and commits
 stable text via the same LocalAgreement-2 as the voice agent, so
-`partials` grow monotonically. This is a native-Kotlin API — there is no
-plugin/Dart channel route for it; from Flutter, drive
-`TheStageVoiceAgent` for live speech-to-text or use the batch `infer` for
+`partials` grow monotonically. `open_asr_streamer` is a native-Kotlin
+API; from Flutter, use the `stream_append` / `stream_finish` calls (see
+[Streaming input (ASR)](#streaming-input-asr) below), drive
+`TSVoiceAgent` for live speech-to-text, or use the batch `infer` for
 one-shot transcription (see [whisper.md](./whisper.md)). Convert mic
 input to 16 kHz mono Float first — it is **not** resampled.
 
@@ -270,7 +270,7 @@ sizes for VAD vs ASR vs TTS) see [Audio I/O Contract](./README.md#audio-io-contr
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `delta` (Kotlin & Flutter) | `String?` | Decoded token text (null on the final sentinel) |
+| `delta` (Kotlin & Flutter) | `String?` | Decoded token text (`""` on the final sentinel) |
 | `index` | `Int` | Position in sequence |
 | `is_final` | `Boolean` | `true` for the sentinel chunk |
 | `time_to_first_token` | `Double?` | Seconds to first token (final only) |
@@ -278,6 +278,7 @@ sizes for VAD vs ASR vs TTS) see [Audio I/O Contract](./README.md#audio-io-contr
 | `generated_tokens` | `Int?` | Output token count (final only) |
 | `tokens_per_second` | `Double?` | Generation speed (final only) |
 | `total_seconds` | `Double?` | Wall-clock time (final only) |
+| `stop_reason` | `String?` | `"eos"`, `"stop_sequence"` or `"max_new_tokens"` (final only) |
 
 ---
 
@@ -291,8 +292,7 @@ await TheStageFlutterSDK.initialize(api_token: 'your_token');
 await TheStageFlutterSDK.start_model(
   model_name: 'tts',
   engines_path: 'TheStageAI/neutts-multilingual',
-  model_type: 'neutts-multilingual',
-  revision: 'android',
+  model_type: 'neutts',
   config: {'voice_id': 'dave'},
 );
 
@@ -302,20 +302,23 @@ await TheStageFlutterSDK.stop_model(model_name: 'tts');
 ### Streaming
 
 ```dart
+const id = 'tts-1';
 final stream = TheStageFlutterSDK.infer_stream(
   model_name: 'tts',
-  input_json: {'text': 'Hello world.'},
+  input_json: {'stream_mode': 'push'},  // wait for `send`
+  stream_id: id,
 );
 
 await TheStageFlutterSDK.send(stream_id: id, text: 'more text');
-await TheStageFlutterSDK.finish_stream(stream_id: id);
+await TheStageFlutterSDK.finish_stream(stream_id: id); // flush + close
+// or, to abandon it instead:
 await TheStageFlutterSDK.stop_stream(stream_id: id);
 ```
 
 ### Audio Player
 
 ```dart
-final player = TheStageAudioPlayer(sampleRate: 24000);
+final player = TSAudioPlayer(sampleRate: 24000);
 await player.start();
 player.enqueue(audioData);
 await player.pause();
@@ -396,10 +399,10 @@ trade latency against smoothness.
 ```kotlin
 import ai.thestage.qlip.models.neutts.NeuTTSStreamConfig
 
-val streamer = tts.open_streamer(
+val streamer = tts.open_tts_streamer(   // a direct NeuTTS* pipeline
     stream_config = NeuTTSStreamConfig(
+        chunk_frames_schedule = listOf(8, 12, 20),  // the default ramp
         frames_per_chunk = 25,
-        first_frames_per_chunk = 12,   // smaller first chunk → faster first audio
         lookforward = 5,
         lookback = 50,
         overlap_frames = 1
@@ -409,30 +412,126 @@ val streamer = tts.open_streamer(
 // Or via the singleton:
 val s2 = TheStageAI.open_tts_streamer(
     model_name = "tts",
-    stream_config = NeuTTSStreamConfig(first_frames_per_chunk = 12)
+    // an even smaller first chunk: faster first audio
+    stream_config = NeuTTSStreamConfig(chunk_frames_schedule = listOf(6, 12, 20))
 )
 ```
 
-`infer_stream(text, stream_config)` accepts the same struct when you
-already have the full text up front.
+A direct pipeline's `synthesize_stream(text = …, config = …)` takes
+the same struct when you already have the full text up front.
 
-**Flutter** — pass a nested `stream_config` map inside `input_json`:
+**Flutter** (and the Kotlin JSON path) — put the fields at the top
+level of `input_json`, next to `text`:
 
 ```dart
 final stream = TheStageFlutterSDK.infer_stream(
   model_name: 'tts',
   input_json: {
     'text': 'Hello, world.',
-    'stream_config': {
-      'first_frames_per_chunk': 12,
-      'frames_per_chunk': 25,
-      'lookforward': 5,
-      'lookback': 50,
-      'overlap_frames': 1,
-    },
+    'chunk_frames_schedule': [8, 12, 20],   // the default ramp
+    'frames_per_chunk': 25,
+    'lookforward': 5,
+    'lookback': 50,
+    'overlap_frames': 1,
   },
 );
 ```
 
 See [NeuTTS — Streaming Hyperparameters](./tts.md#streaming-hyperparameters)
-for the full field reference.
+for the full field reference. Passing `frames_per_chunk` or
+`first_frames_per_chunk` without `chunk_frames_schedule` turns the
+startup ramp off.
+
+---
+
+## Streaming input (ASR)
+
+TTS and LLM streaming take their whole input up front and stream
+results **out**. ASR is the other direction: the session opens first
+and audio is pushed **in** while partial transcripts come back.
+
+Three calls drive it, alongside `infer_stream`:
+
+| Call | Purpose |
+|---|---|
+| `stream_append` | push the next slice of audio |
+| `stream_finish` | end the turn; the final transcript arrives as the terminal chunk |
+| `stream_cancel` | abandon the turn with no result |
+
+Open the stream, then push. Partials are the committed-so-far
+transcript and only ever grow — a stable prefix is never retracted,
+so they are safe to render directly as live captions.
+
+**Kotlin:**
+
+```kotlin
+val job = launch {
+    TheStageAI.infer_stream(
+        model_name = "asr",
+        input_json = mapOf("language" to "en"),
+    ).collect { chunk ->
+        if (chunk.is_final) println("final: ${chunk.delta}")
+        else println("partial: ${chunk.delta}")
+    }
+}
+
+// Push 16 kHz mono audio in [-1, 1], any slice size.
+TheStageAI.stream_append(
+    model_name = "asr",
+    input_json = mapOf("audio" to samples.map { it.toDouble() }),
+)
+
+TheStageAI.stream_finish(model_name = "asr")   // flow completes
+job.join()
+```
+
+**Flutter:**
+
+```dart
+final stream = TheStageFlutterSDK.infer_stream(
+  model_name: 'asr',
+  input_json: {'language': 'en'},
+);
+stream.listen((chunk) {
+  if (chunk['is_final'] == true) print('final: ${chunk['delta']}');
+  else print('partial: ${chunk['delta']}');
+});
+
+await TheStageFlutterSDK.stream_append(
+  model_name: 'asr',
+  input_json: {'audio': samples},   // List<double>, 16 kHz mono
+);
+
+await TheStageFlutterSDK.stream_finish(model_name: 'asr');
+```
+
+Notes:
+
+- The flow completes when `stream_finish` resolves or `stream_cancel`
+  is called — not before. The terminal chunk carries the authoritative
+  transcript, which may differ from the last partial.
+- Appends are serialized against inference on the model's own thread,
+  so pushing while a pass is running is safe. An append also knows
+  whether newer audio is already queued behind it, so optional
+  per-append work is skipped rather than done and immediately
+  superseded.
+- Models that take their whole input up front — NeuTTS, LFM2.5-VL —
+  reject these three calls.
+- After a cancel the model stays usable; the next `infer_stream` or
+  `infer` works normally.
+
+### Reusing a bundle across models
+
+`engines_path_of(model_name)` returns where a running model's engines
+were resolved to, or null if it is not running. Starting a second
+model against that path skips re-resolving the repo id — which, on a
+cache miss, would otherwise re-download a bundle the device already
+has.
+
+```kotlin
+val path = TheStageAI.engines_path_of("asr") ?: return
+TheStageAI.start_model(
+    model_name = "asr_second",
+    engines_path = path,
+)
+```

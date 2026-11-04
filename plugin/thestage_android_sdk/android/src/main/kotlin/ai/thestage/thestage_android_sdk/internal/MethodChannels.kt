@@ -21,6 +21,8 @@ internal object MethodChannels {
         "thestage_android_sdk/voice_agent_transcripts"
     const val VOICE_AGENT_VAD_PROBABILITIES =
         "thestage_android_sdk/voice_agent_vad_probabilities"
+    const val VOICE_AGENT_TTS_LEVELS =
+        "thestage_android_sdk/voice_agent_tts_levels"
     const val VOICE_AGENT_PORTS =
         "thestage_android_sdk/voice_agent_ports"
     const val VOICE_AGENT_NODES =
@@ -55,11 +57,29 @@ internal object MethodRoute {
 
     const val MEMORY_FOOTPRINT = "memory_footprint"
 
+    // Model lifecycle. Wire values are snake_case like the
+    // rest of this channel.
+    const val INSTALLED_MODELS = "installed_models"
+    const val AVAILABLE_UPDATES = "available_updates"
+    const val UPDATE_AVAILABLE = "update_available"
+    const val REMOVE_MODEL = "remove_model"
+    const val VERIFY_MODEL = "verify_model"
+    const val REPAIR_MODEL = "repair_model"
+    const val MAINTAIN_MODELS = "maintain_models"
+    const val RESET_MODELS = "reset_models"
+
     const val INFER = "infer"
     const val START_STREAM = "start_stream"
     const val SEND = "send"
     const val FINISH_STREAM = "finish_stream"
     const val STOP_STREAM = "stop_stream"
+
+    // Push input INTO a live infer_stream session (ASR).
+    // Distinct from the four above, which drive the TTS
+    // text streamer.
+    const val STREAM_APPEND = "stream_append"
+    const val STREAM_FINISH = "stream_finish"
+    const val STREAM_CANCEL = "stream_cancel"
 
     const val AUDIO_START = "audio_start"
     const val AUDIO_ENQUEUE = "audio_enqueue"
@@ -87,6 +107,8 @@ internal object MethodRoute {
         "voice_agent.publish_node_event"
     const val VOICE_AGENT_SEND_REQUEST =
         "voice_agent.send_request"
+    const val VOICE_AGENT_SET_SYSTEM_PROMPT =
+        "voice_agent.set_system_prompt"
 
     const val SCREEN_RECORDER_IS_RECORDING =
         "screen_recorder.is_recording"
@@ -98,4 +120,5 @@ internal object MethodRoute {
     const val ANDROID_PREFETCH_MODEL = "prefetch_model"
     const val ANDROID_CHECK_MODEL_AVAILABILITY =
         "check_model_availability"
+    // Live LLM HTP perf policy, no model reload (Genie only).
 }

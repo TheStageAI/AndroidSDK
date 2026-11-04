@@ -3,4 +3,6 @@ export 'src/audio_player.dart';
 export 'src/voice_agent.dart';
 export 'src/agent_node.dart';
 export 'src/tts_controller.dart';
+export 'src/nemotron.dart';
 export 'src/screen_recorder.dart';
+export 'src/ts_compat_aliases.dart';

@@ -228,16 +228,70 @@ class InferStreamHandler(
         }
 
         val job = __scope.launch(Dispatchers.Default) {
+            // Text deltas are COALESCED into at most one event per
+            // frame. A fast LLM emits a token every few ms, and each
+            // one otherwise costs a hop to the main thread, a
+            // StandardMessageCodec round trip and a Flutter rebuild of
+            // an ever-growing message — work a 60 Hz display cannot
+            // show. Concatenating within a frame keeps streaming
+            // visually identical and removes most of that per-token
+            // cost. Only `text` (and a tool stream's `text_delta`) is
+            // batched, never across kinds: audio carries payloads a
+            // consumer times against playback, tool calls and
+            // thinking are their own events, and the terminal chunk
+            // must arrive on its own.
+            val pending = StringBuilder()
+            var pending_index = 0
+            var pending_kind = "text"
+            var last_flush = android.os.SystemClock.uptimeMillis()
+
+            suspend fun emit(payload: Map<String, Any?>) {
+                withContext(Dispatchers.Main) {
+                    try {
+                        sink.success(payload)
+                    } catch (_: Throwable) {}
+                }
+            }
+            suspend fun flush_pending() {
+                if (pending.isEmpty()) return
+                emit(
+                    __chunk_to_event(
+                        stream_id,
+                        ai.thestage.qlip.InferenceStreamChunk(
+                            kind = pending_kind,
+                            index = pending_index,
+                            is_final = false,
+                            delta = pending.toString(),
+                        ),
+                    )
+                )
+                pending.setLength(0)
+            }
+
             try {
                 flow.collect { chunk ->
-                    val payload =
-                        __chunk_to_event(stream_id, chunk)
-                    withContext(Dispatchers.Main) {
-                        try {
-                            sink.success(payload)
-                        } catch (_: Throwable) {}
+                    val batchable = chunk.kind in BATCHED_KINDS &&
+                        !chunk.is_final &&
+                        chunk.audio == null
+                    if (batchable) {
+                        if (chunk.kind != pending_kind) {
+                            flush_pending()
+                            pending_kind = chunk.kind
+                        }
+                        pending.append(chunk.delta ?: "")
+                        pending_index = chunk.index
+                        val now = android.os.SystemClock.uptimeMillis()
+                        if (now - last_flush >= COALESCE_MS) {
+                            flush_pending()
+                            last_flush = now
+                        }
+                    } else {
+                        flush_pending()
+                        emit(__chunk_to_event(stream_id, chunk))
+                        last_flush = android.os.SystemClock.uptimeMillis()
                     }
                 }
+                flush_pending()
             } catch (e: Exception) {
                 Log.e(
                     TAG,
@@ -261,5 +315,12 @@ class InferStreamHandler(
 
     companion object {
         private const val TAG = "InferStreamHandler"
+
+        /** Frame budget for coalescing text deltas (~60 Hz). */
+        private const val COALESCE_MS = 16L
+
+        /** Chunk kinds whose deltas may be joined within a
+         *  frame (each only with its own kind). */
+        private val BATCHED_KINDS = setOf("text", "text_delta")
     }
 }

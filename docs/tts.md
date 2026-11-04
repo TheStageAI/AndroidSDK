@@ -4,7 +4,21 @@ On-device neural text-to-speech with batch and push-based streaming.
 Two public pipelines:
 
 - **`NeuTTSMultilingual`** — Qwen3-based, 9 languages.
-- **`NeuTTS`** (nano) — phoneme-based, English only, faster.
+- **`NeuTTS`** (nano) — phoneme-based, English only.
+
+## Models
+
+| HF repo | Pipeline | Languages | Voice packs |
+|---|---|---|---|
+| `TheStageAI/neutts-nano-multilingual` | `NeuTTSMultilingual` | the 9 [languages](#voices-and-languages) | yes |
+| `TheStageAI/neutts-multilingual` | `NeuTTSMultilingual` | the 9 [languages](#voices-and-languages) | yes |
+| `TheStageAI/neutts` | `NeuTTS` (nano) | English | no |
+
+All three are `model_type` `neutts`; the SDK picks the pipeline from
+the bundle. `neutts-nano-multilingual` is the smaller, faster
+multilingual model and the one the example apps load; the examples on
+this page use `neutts-multilingual`, and every call works the same on
+either.
 
 Flutter consumers go through the singleton `start_model` + `infer` /
 `infer_stream` (JSON) path — there is no direct TTS pipeline
@@ -33,8 +47,10 @@ val json = TheStageAI.infer(
     model_name = "tts",
     input_json = mapOf("text" to "Hello, world!")
 )
-val audio       = json[0]["audio"]                          // 24 kHz mono PCM
-val sampleRate  = json[0]["sample_rate"] as Int             // 24000
+// Batch audio arrives as List<Double>: 24 kHz mono PCM.
+val audio = (json[0]["audio"] as List<Double>)
+    .map { it.toFloat() }.toFloatArray()
+val sampleRate = json[0]["sample_rate"] as Int              // 24000
 ```
 
 The direct Kotlin pipelines load from a **local** (already-downloaded)
@@ -82,8 +98,10 @@ final result = await TheStageFlutterSDK.infer(
   model_name: 'tts',
   input_json: {'text': 'Hello, world!'},
 );
-final audio       = result[0]['audio']       as Float32List;
-final sampleRate  = result[0]['sample_rate'] as int; // 24000
+// Batch audio arrives as List<double>: 24 kHz mono PCM.
+final audio = Float32List.fromList(
+    (result[0]['audio'] as List).cast<double>());
+final sampleRate = result[0]['sample_rate'] as int; // 24000
 ```
 
 ## Inputs / Outputs
@@ -91,7 +109,7 @@ final sampleRate  = result[0]['sample_rate'] as int; // 24000
 | Direction | Type | Description |
 |---|---|---|
 | input  `text` | `String` | Text to synthesize. |
-| input  `config.seed` | `Long?` | Deterministic sampling. |
+| input  `seed` | `Long?` | Deterministic sampling. |
 | output `NeuTTSResult.audio` | `FloatArray` | 24 kHz mono PCM, samples in `[-1.0, 1.0]`. |
 | output `NeuTTSResult.sample_rate` | `Int` | Always `24000`. |
 | output `NeuTTSResult.audio_duration` | `Double` | Seconds of audio. |
@@ -100,14 +118,15 @@ final sampleRate  = result[0]['sample_rate'] as int; // 24000
 
 ## Streaming
 
-`open_streamer` is push-based: collect `streamer.output` **concurrently**
-with `streamer.send(...)` so audio plays the moment each sentence is
-ready. Typical use case is piping LLM tokens straight into TTS.
+`open_tts_streamer` is push-based: collect `streamer.output`
+**concurrently** with `streamer.send(...)` so audio plays the moment
+each sentence is ready. Typical use case is piping LLM tokens straight
+into TTS.
 
 **Kotlin:**
 
 ```kotlin
-val streamer = tts.open_streamer()
+val streamer = TheStageAI.open_tts_streamer(model_name = "tts")
 
 val consumer = launch {
     streamer.output.collect { chunk ->
@@ -122,25 +141,29 @@ streamer.finish()   // flush remaining buffer + close `output`
 consumer.join()
 ```
 
-If you already have the full text up-front, `infer_stream(text)` does
-the same thing in a single call. Use `streamer.cancel()` instead of
+A `NeuTTSMultilingual` or `NeuTTS` you construct yourself opens the
+same streamer with `tts.open_tts_streamer()`. If you already have the
+full text up-front, `TheStageAI.infer_stream(model_name = "tts",
+input_json = mapOf("text" to text))` (or `tts.synthesize_stream(text
+= text)` on a direct pipeline) does the same thing in a single call.
+Use `streamer.cancel()` instead of
 `finish()` to abort an in-flight turn (e.g. on barge-in) — that drops
 the buffer and closes immediately.
 
 **Flutter** — push-based streaming uses
 `infer_stream` + `send` + `finish_stream` against a stable
-`stream_id`. Open the stream with empty text first, then push
-sentences as they become available:
+`stream_id`. Open the stream with `stream_mode: 'push'` first, then
+push sentences as they become available:
 
 ```dart
 const streamId = 'tts-utterance-1';
-final player = TheStageAudioPlayer(sampleRate: 24000)..start();
+final player = TSAudioPlayer(sampleRate: 24000)..start();
 
 // 1) Open the stream + start consuming chunks concurrently.
 final consumer = () async {
   final stream = TheStageFlutterSDK.infer_stream(
     model_name: 'tts',
-    input_json: {'text': ''},   // empty = wait for `send`
+    input_json: {'stream_mode': 'push'},  // wait for `send`
     stream_id: streamId,
   );
   await for (final chunk in stream) {
@@ -173,34 +196,40 @@ need to trade latency against smoothness.
 
 | Field | Default | Description |
 |---|---|---|
-| `frames_per_chunk` | `25` | Codec frames decoded per emitted audio chunk after the first. Larger = fewer, longer chunks. |
-| `first_frames_per_chunk` | `25` | Frames in the **first** chunk; pass a smaller value (or `null` to fall back to `frames_per_chunk`) to lower time-to-first-audio. |
+| `chunk_frames_schedule` | `[8, 12, 20]` | Frames in the first chunks: small ones give a fast first audio, then every chunk has `frames_per_chunk`. An empty list turns the ramp off. **Passing `frames_per_chunk` or `first_frames_per_chunk` without a schedule turns it off too.** |
+| `frames_per_chunk` | `25` | Chunk size after the schedule. Larger = fewer, longer chunks. |
+| `first_frames_per_chunk` | `25` | Frames in the first chunk when there is no schedule (`null` = `frames_per_chunk`). |
 | `lookforward` | `5` | Future frames decoded together with each chunk to stabilise the seam (overlap-add window). |
 | `lookback` | `50` | Past frames re-decoded for context when bridging chunks; reduces audible boundaries. |
 | `overlap_frames` | `1` | Frames of crossfade between consecutive chunks. |
 | `realtime_gate` | `true` | Paces streaming synthesis toward real-time to keep NPU heat/power down; `false` synthesizes as fast as possible. |
+| `realtime_lead_ms` | `2000` | Audio the pacing keeps buffered ahead of real-time, in ms. |
 | `output_sample_rate` | `0` | Resample output to this rate in Hz; `0` keeps the native 24 kHz. |
 | `chained_chunks` | model default | Keep decoder state continuous across a request's chunks for smoother joins. |
 
 Generation knobs (`temperature`, `top_k`, …) live on
 `TTSGenerationConfig` and are independent of these.
 
-**Kotlin** — pass `stream_config:` to `open_streamer` or `infer_stream`:
+**Kotlin** — pass `stream_config` to `open_tts_streamer`, or `config`
+to a direct pipeline's `synthesize_stream`:
 
 ```kotlin
-val streamer = tts.open_streamer(
+import ai.thestage.qlip.models.neutts.NeuTTSStreamConfig
+
+val streamer = tts.open_tts_streamer(
     stream_config = NeuTTSStreamConfig(
+        chunk_frames_schedule = listOf(8, 12, 20),  // the default ramp
         frames_per_chunk = 25,
-        first_frames_per_chunk = 12,   // smaller first chunk → faster first audio
         lookforward = 5,
         lookback = 50,
         overlap_frames = 1
     )
 )
 
-val stream = tts.infer_stream(
+val stream = tts.synthesize_stream(
     text = "Hello, world.",
-    stream_config = NeuTTSStreamConfig(first_frames_per_chunk = 12)
+    // an even smaller first chunk: faster first audio
+    config = NeuTTSStreamConfig(chunk_frames_schedule = listOf(6, 12, 20))
 )
 ```
 
@@ -209,24 +238,23 @@ The same knobs are exposed through the singleton:
 ```kotlin
 val streamer = TheStageAI.open_tts_streamer(
     model_name = "tts",
-    stream_config = NeuTTSStreamConfig(first_frames_per_chunk = 12)
+    stream_config = NeuTTSStreamConfig(chunk_frames_schedule = listOf(6, 12, 20))
 )
 ```
 
-**Flutter** — drop a `stream_config` map into `input_json`:
+**Flutter** (and the Kotlin JSON path) — put the fields at the top
+level of `input_json`, next to `text`:
 
 ```dart
 final stream = TheStageFlutterSDK.infer_stream(
   model_name: 'tts',
   input_json: {
     'text': 'Hello, world.',
-    'stream_config': {
-      'frames_per_chunk': 25,
-      'first_frames_per_chunk': 12,
-      'lookforward': 5,
-      'lookback': 50,
-      'overlap_frames': 1,
-    },
+    'chunk_frames_schedule': [8, 12, 20],   // the default ramp
+    'frames_per_chunk': 25,
+    'lookforward': 5,
+    'lookback': 50,
+    'overlap_frames': 1,
   },
 );
 ```
@@ -241,8 +269,72 @@ multilingual model supports:
 `english`, `french`, `german`, `spanish`, `portuguese`, `japanese`,
 `korean`, `chinese`, `urdu`
 
-Pass the language at construction time (it can be overridden per-voice
-default). The nano variant is English-only and ignores the parameter.
+Pass the language at construction time; left unset, it defaults to
+the voice's own language. The English-only `TheStageAI/neutts`
+bundle ignores it.
+
+Three knobs pick what the model speaks with:
+
+- **`voice_id`** picks a voice that ships in the bundle (the `voices`
+  list in the `start_model` result). Empty = the bundle's first voice.
+- **`voice_dir`** points at a voice pack: **one folder holding a
+  `voice.json`** (yours, or a downloaded one). It wins over
+  `voice_id`. An empty value is ignored.
+- **`language`** switches the language while keeping the speaker.
+
+**Flutter** — pick the voice at load. A request can also carry
+`voice_id` (and, on the multilingual bundles, `language`) in
+`input_json` to speak that one request with another voice. To change
+`voice_dir`, stop and start again:
+
+```dart
+await TheStageFlutterSDK.stop_model(model_name: 'tts');
+await TheStageFlutterSDK.start_model(
+  model_name: 'tts',
+  engines_path: 'TheStageAI/neutts-multilingual',
+  config: {
+    'voice_id': 'dave',
+    'language': 'french',
+    // 'voice_dir': '/path/to/your/voice_pack',   // wins over voice_id
+  },
+);
+```
+
+**Kotlin** — the same keys work in `TheStageAI.start_model(config =
+...)`. A `NeuTTSMultilingual` you construct yourself also switches at
+runtime with `set_voice`, without reloading the LLM or codec (a voice
+is only reference codes and text). `null` keeps a value; an empty
+`voice_dir` returns to the bundle voice; an empty `language` returns
+to the voice's own language. An unknown `voice_id` or language, or a
+`voice_dir` without `voice.json`, throws and keeps the current voice.
+Call it between utterances.
+
+```kotlin
+val tts = NeuTTSMultilingual(
+    engines_path = dir,
+    voice_id = "paul",
+    language = "english",
+    // voice_dir = packDir.path,              // wins over voice_id
+)
+tts.set_voice(voice_id = "dave")
+tts.set_voice(voice_id = "dave", language = "french")
+tts.set_voice(voice_dir = packDir.path)       // your own voice pack
+tts.set_voice(voice_dir = "")                 // back to "dave"
+```
+
+**Your own voice.** A voice pack is a folder with one `voice.json`,
+made offline from a short reference clip (3–10 s) and its transcript;
+see [`voice.json` shape](#voicejson-shape). Packs work on the
+multilingual NeuTTS bundles. Copy the folder to a real path on the
+device (download it, or extract it from your assets) and pass that
+path. A `voice_dir` without a `voice.json` fails the load (or the
+`set_voice` call, keeping the current voice), and so does any
+`voice_dir` on the English-only nano bundle, whose voices use a
+different format.
+
+> Inside the Voice Agent the same knobs are `tts_voice`,
+> `tts_voice_dir` and `tts_language` in the config, and
+> `agent.set_voice(...)` at runtime — see [Voice Agent](./voice_agent.md#voices).
 
 ## Custom Voices
 
@@ -331,7 +423,7 @@ that reference audio, and per-voice generation defaults:
 | Field | Required | Description |
 |---|---|---|
 | `name` | yes | Display name; usually matches the folder. |
-| `language` | yes | One of the supported languages (nano ignores it). |
+| `language` | yes | One of the supported languages. |
 | `ref_text` | yes | Transcript of the reference audio the codes came from. |
 | `ref_codes` | yes | NeuCodec codes for the reference audio (authored offline). |
 | `temperature`, `top_k`, `max_length`, `min_new_tokens`, `use_lang_token` | no | Per-voice generation defaults; omit to use the model defaults. |
@@ -356,7 +448,7 @@ list at load.
   consumers can concatenate slices end-to-end.
 - If your playback path runs at 16 kHz to match VAD/ASR, set
   `output_sample_rate: 16000` to have the SDK resample for you, resample
-  the output yourself, or drive your `TheStageAudioPlayer` at 24 kHz
+  the output yourself, or drive your `TSAudioPlayer` at 24 kHz
   (the bundled player defaults to 24 kHz).
 
 See [Audio I/O Contract](./README.md#audio-io-contract) for the
@@ -408,13 +500,15 @@ A push-based streamer is also reachable via the singleton:
 
 ```kotlin
 val streamer = TheStageAI.open_tts_streamer(model_name = "tts")
-// same `streamer.send(...)` / `streamer.finish()` shape as above
+// streamer.send(...) / streamer.finish() / streamer.cancel(),
+// audio on streamer.output — see Streaming above
 ```
 
 The Flutter `TheStageFlutterSDK.infer` / `infer_stream` calls hit this
 exact JSON path, so the response keys above apply unchanged on Dart.
-PCM audio crosses the platform channel as `Float32List`; do not
-promote to `Float64List`.
+Streaming chunks carry their PCM as `Float32List`; do not promote it
+to `Float64List`. Batch `infer` returns `audio` as `List<double>`;
+convert it with `Float32List.fromList(...cast<double>())`.
 
 ## Full Constructor
 
@@ -422,7 +516,8 @@ promote to `Float64List`.
 val tts = NeuTTSMultilingual(
     engines_path = dir,               // local (prefetched) dir
     voice_id = "paul",                // voice subfolder under voices/
-    language = "english"              // optional language override
+    language = "english",             // optional language override
+    voice_dir = null,                 // optional voice-pack folder
 )
 
 val nano = NeuTTS(
@@ -432,16 +527,18 @@ val nano = NeuTTS(
 ```
 
 Per-component device placement (LLM on NPU, NeuCodec pre/post on CPU)
-is set in the bundle's `metadata.json`; when downloading through the
-singleton, pass overrides via `start_model(device = ..., devices = ...)`.
+is set in the bundle's `metadata.json`. Through the singleton,
+`start_model(device = ...)` chooses which bundle to download (see
+[Choosing the device](./model_management.md#choosing-the-device)) and
+`devices = ...` overrides the placement of individual modules.
 `TheStageAI.initialize(...)` must have succeeded before either call.
 
 ## Load Progress
 
 Download / extract / load progress is reported through the singleton
-and Flutter entry points via an optional `on_load_progress` handler
-that fires through four phases with a monotonic `fraction` in
-`0.0 .. 1.0`:
+and Flutter entry points via an optional `on_load_progress`
+handler. `phase` is the signal; `fraction` is non-null only
+while downloading, where it runs `0.0 .. 1.0`:
 
 ```kotlin
 TheStageAI.start_model(
@@ -449,7 +546,8 @@ TheStageAI.start_model(
     engines_path = "TheStageAI/neutts-multilingual",
     config = mapOf("voice_id" to "paul"),
     on_load_progress = { p ->
-        println("[${p.model}] ${p.phase} ${(p.fraction * 100).toInt()}%")
+        val pct = p.fraction?.let { " ${(it * 100).toInt()}%" } ?: ""
+        println("[${p.model}] ${p.phase}$pct")
     }
 )
 ```
@@ -463,9 +561,16 @@ The same `on_load_progress` parameter is accepted by
 ```dart
 TheStageFlutterSDK.on_progress.listen((event) {
   if (event['model_name'] != 'tts') return;
-  final phase    = event['phase']    as String?;   // downloading | extracting | loading | ready
-  final fraction = event['progress'] as double?;   // 0.0 ... 1.0, monotonic
-  print('[tts] $phase ${(fraction ?? 0) * 100}%');
+  // phase: downloading | waiting_for_wifi |
+  //        waiting_for_confirmation | extracting | loading | ready
+  final phase    = event['phase']    as String?;
+  // Present only while downloading. Null => show an
+  // indeterminate indicator; do NOT fall back to 0.
+  final fraction = event['progress'] as num?;
+  final pct = fraction == null
+      ? ''
+      : ' ${(fraction * 100).toStringAsFixed(0)}%';
+  print('[tts] $phase$pct');
 });
 
 await TheStageFlutterSDK.start_model(

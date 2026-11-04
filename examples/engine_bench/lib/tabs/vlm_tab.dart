@@ -6,22 +6,39 @@ import 'package:image_picker/image_picker.dart';
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 import '../backend/bench_session.dart';
+import '../backend/load_state.dart';
 import '../backend/sdk_host.dart';
 import '../widgets/bench_widgets.dart';
 
 // ----------------------------------------------------------------------
-// VlmTab — LFM2.5-VL caption (streaming) + benchmark
+// VlmTab — on-device VLM caption (streaming) + benchmark
 // ----------------------------------------------------------------------
-// The whole stack (vision -> projector -> prompt -> Genie LLM) runs
-// on-device. Pick an image (gallery / camera), then Generate (streaming,
-// honest TTFT) or Benchmark (warmup + N quiet runs, records tok/s medians).
-const _vlmEnginesPath = String.fromEnvironment(
-  'LFM2_VL_ENGINES_PATH',
-  defaultValue: 'TheStageAI/LFM2.5-VL-450M',
-);
+// The whole stack (vision -> projector -> prompt -> LLM) runs
+// on-device. Pick a model and an image (gallery / camera), then Generate
+// (streaming, honest TTFT) or Benchmark (warmup + N quiet runs, records
+// tok/s medians).
+class _VlmModel {
+  const _VlmModel(this.displayName, this.enginesPath, this.modelType);
+  final String displayName;
+  final String enginesPath;
+
+  /// The `model_type` for `start_model`; null lets the bundle's own
+  /// manifest name it.
+  final String? modelType;
+}
+
+const _vlmModels = [
+  _VlmModel('LFM2.5-VL 450M', 'TheStageAI/LFM2.5-VL-450M', 'lfm2-vl'),
+  _VlmModel('LFM2.5-VL 1.6B', 'TheStageAI/LFM2.5-VL-1.6B', 'lfm2-vl'),
+  _VlmModel('Gemma 4 E2B', 'TheStageAI/gemma-4-E2B-it', 'gemma4-vl'),
+];
+
+// A bundle of your own (HF repo id or local dir), added to the picker.
+// Its manifest names the model type.
+const _vlmEnginesPath = String.fromEnvironment('LFM2_VL_ENGINES_PATH');
 const _vlmRevision = String.fromEnvironment(
   'LFM2_VL_REVISION',
-  defaultValue: 'android',
+  defaultValue: '',
 );
 
 class VlmTab extends StatefulWidget {
@@ -36,6 +53,15 @@ class _VlmTabState extends State<VlmTab> {
   static const _preset = 'medium';
   static const _warmupRuns = 1;
 
+  final List<_VlmModel> _models = [
+    if (_vlmEnginesPath.isNotEmpty)
+      const _VlmModel('Custom bundle', _vlmEnginesPath, null),
+    ..._vlmModels,
+  ];
+  late _VlmModel _selected = _models.first;
+  // What is loaded under [_modelName] (see [loadKey]), if anything.
+  String? _loadedKey;
+
   final _picker = ImagePicker();
   final _promptCtl =
       TextEditingController(text: 'Describe this image briefly.');
@@ -43,13 +69,12 @@ class _VlmTabState extends State<VlmTab> {
   int _maxNew = 64;
   int _runs = 5;
 
-  bool _loaded = false;
   bool _running = false;
   String _status = 'pick an image, then Generate';
   String _statsLine = '';
   String _output = '';
   String? _loadPhase;
-  double _loadFraction = 0;
+  double? _loadFraction;
   StreamSubscription<Map<String, dynamic>>? _progressSub;
 
   @override
@@ -67,24 +92,29 @@ class _VlmTabState extends State<VlmTab> {
   }
 
   Future<void> _ensureModel() async {
-    if (_loaded) return;
+    final m = _selected;
+    final key = loadKey(m.enginesPath, modelType: m.modelType);
+    if (_loadedKey == key) return;
     await SdkHost.instance.ensureInitialized();
+    if (_loadedKey != null) {
+      await _stopModel();
+      _loadedKey = null;
+    }
     _progressSub = TheStageFlutterSDK.on_progress.listen((e) {
-      if (!mounted) return;
+      if (!mounted || !isProgressFor(e, _modelName)) return;
       setState(() {
         _loadPhase = e['phase'] as String?;
-        _loadFraction = (e['progress'] as num?)?.toDouble() ?? 0;
+        _loadFraction = (e['progress'] as num?)?.toDouble();
       });
     });
     try {
       await TheStageFlutterSDK.start_model(
-        model_type: 'lfm2-vl',
+        model_type: m.modelType,
         model_name: _modelName,
-        engines_path: _vlmEnginesPath,
+        engines_path: m.enginesPath,
         revision: _vlmRevision,
-        device: 'npu',
       );
-      _loaded = true;
+      _loadedKey = key;
     } finally {
       await _progressSub?.cancel();
       _progressSub = null;
@@ -232,7 +262,7 @@ class _VlmTabState extends State<VlmTab> {
       }
       BenchSession.instance.add(BenchRecord(
         kind: 'vlm',
-        model: 'LFM2.5-VL 450M',
+        model: _selected.displayName,
         runs: n,
         prompt: prompt,
         maxNewTokens: _maxNew,
@@ -267,6 +297,14 @@ class _VlmTabState extends State<VlmTab> {
     return BenchScaffold(
       title: 'VLM bench',
       children: [
+        ModelChips<_VlmModel>(
+          models: _models,
+          selected: _selected,
+          label: (m) => m.displayName,
+          enabled: !_running,
+          onSelected: (m) => setState(() => _selected = m),
+        ),
+        const SizedBox(height: 12),
         Row(children: [
           _preview(),
           const SizedBox(width: 12),

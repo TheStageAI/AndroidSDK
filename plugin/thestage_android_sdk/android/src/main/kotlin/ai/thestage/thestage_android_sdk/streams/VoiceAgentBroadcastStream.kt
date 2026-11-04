@@ -16,8 +16,8 @@ import kotlinx.coroutines.withContext
 /**
  * EventChannel stream handler that taps one of the voice
  * agent's typed flows ([TheStageVoiceAgent.llm_deltas],
- * `transcripts`, or `vad_probabilities`) and forwards each
- * value to the Dart broadcast stream. Mirrors Swift's
+ * `transcripts`, `vad_probabilities` or `tts_levels`) and
+ * forwards each value to the Dart broadcast stream. Mirrors Swift's
  * `VoiceAgentBroadcastStream`.
  *
  * The agent may not exist yet when Dart starts listening,

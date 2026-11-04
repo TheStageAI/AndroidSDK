@@ -1,39 +1,50 @@
 # voice_agent
 
 Full voice-assistant demo: speak into the mic, get a spoken response
-back, all orchestrated natively. STT runs on-device (Whisper), the LLM
-step calls OpenAI's hosted API, and TTS streams back through the
-on-device NeuTTS pipeline.
+back, all orchestrated natively and on-device by default: Whisper STT,
+an on-device LLM (`TheStageAI/LFM2.5-350M`; others in the pickers),
+and TTS streaming back through NeuTTS (`neutts-nano-multilingual`).
 
 ## What it exercises
 
-- Mic capture + on-device VAD + Whisper STT.
-- A cloud LLM provider (OpenAI by default) reached over HTTPS — swap in
-  any provider by changing the LLM fields in
+- Mic capture + on-device VAD + Whisper STT, with live caption partials
+  and smart-turn end-of-turn detection.
+- The on-device LLM (`llm_provider: local`, run with thinking off), or a
+  cloud provider (OpenAI-compatible) reached over HTTPS — pick it in
+  Settings, or change the LLM fields in
   `lib/backend/settings_model.dart`.
-- Streaming NeuTTS playback with barge-in.
-- The `TheStageVoiceAgent` native orchestrator (state stream + typed
-  ports for transcripts and LLM deltas).
+- Tool calling: the on-device LLM checks weather, local time and the
+  web mid-reply (`llm_tools`, default `web` here; `voice` adds
+  Wikipedia, a calculator and phone actions). The status line shows
+  `Calling tool...` and each call and result appears as a small
+  monospace line in the chat; only the answer is spoken.
+- Streaming NeuTTS playback with barge-in: speak over the reply to
+  interrupt it.
+- The native voice-agent orchestrator through `TSVoiceAgent`: the
+  `agent.events` stream (state changes, transcripts, reply deltas,
+  errors, the TTS bundle's `voices`), the `tts_levels` stream that
+  drives the speaking meter, and the `capabilities` map `start()`
+  returns.
 
 ## How the code is laid out
 
 The app is deliberately split so the data flow is easy to follow:
 
 - `lib/backend/voice_agent_controller.dart` — the single place that
-  subscribes to `agent.events` and turns each event into typed UI state.
-  **Start here to see how transcription and LLM output reach the
-  screen.**
+  subscribes to `agent.events` / `tts_levels` and turns each event into
+  typed UI state. **Start here to see how transcription and LLM output
+  reach the screen.**
 - `lib/ui/voice_chat_screen.dart` — a "dumb" view: it renders the
   controller's fields and wires the Start / Stop / Interrupt buttons.
 - `lib/backend/settings_model.dart` — model ids, LLM provider config,
-  and the interruption/VAD knobs sent to `agent.start(config:)`.
+  and the interruption / VAD / turn-detection knobs sent to
+  `agent.start(config:)`.
 
 ## Prerequisites
 
 - A TheStage API token — set as `TS_API_TOKEN` in `secrets.json`.
-- An OpenAI API key — set as `OPENAI_API_KEY` in `secrets.json`. (Swap
-  for another provider if you prefer; just update the LLM call site and
-  the dart-define name.)
+- Optional: an OpenAI API key — set as `OPENAI_API_KEY` in
+  `secrets.json` — only for the cloud LLM provider.
 - A physical Qualcomm Snapdragon device (arm64-v8a), Android 9+
   (minSdk 28). Microphone permission is requested at launch.
 
@@ -41,16 +52,10 @@ The app is deliberately split so the data flow is easy to follow:
 
 ```bash
 # from the repo root
-./scripts/setup.sh    # one-time, idempotent
+./scripts/setup.sh    # one-time, idempotent; creates examples/*/secrets.json
 
-cp examples/voice_agent/secrets.example.json \
-   examples/voice_agent/secrets.json
-$EDITOR examples/voice_agent/secrets.json
-```
+$EDITOR examples/voice_agent/secrets.json    # the file setup.sh created
 
-Then:
-
-```bash
 cd examples/voice_agent
 flutter pub get
 flutter run --release \
@@ -58,12 +63,25 @@ flutter run --release \
     -d <YOUR_DEVICE_ID>
 ```
 
+Pick the models in the bar above the controls, then tap **Start**. The
+first start downloads and prepares every model; the status line shows
+which one is loading. The agent then listens continuously: speak, and it
+answers.
+
 ## Notes
 
-- The mic icon controls both capture and barge-in. While TTS is
-  speaking, tapping the mic interrupts playback and starts listening.
-- All STT and TTS work happens on-device. The only network hop is the
-  LLM call.
-- The agent's state machine and outputs are exposed over a Flutter event
-  channel — see `lib/backend/voice_agent_controller.dart` for how those
-  events map to the UI.
+- **Start** / **Stop** run and tear down the whole agent; the model and
+  voice pickers are editable only while it is stopped. **Interrupt**
+  appears while the agent is thinking or speaking and cancels the reply.
+  A failed start shows its error in the banner and returns to idle.
+- The voice picker lists the loaded TTS bundle's own voices once the
+  agent has started (a short default list before that).
+- Settings holds the VAD, turn-detection, barge-in and AEC knobs; they
+  apply at the next Start (the interrupt knobs also apply live).
+- With `llm_tools: web`, a city name or search query you ask about is
+  sent to Open-Meteo, DuckDuckGo or Wikipedia; set Tools to `none` in
+  Settings to keep every request on the phone. The `voice` and `phone`
+  presets open other apps (dialer, maps, SMS) for you to confirm.
+- With the default on-device LLM, everything runs on the phone after
+  the first model downloads; the cloud provider adds one network hop
+  per reply.
