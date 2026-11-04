@@ -74,6 +74,13 @@ class VoiceAgentSettings extends ChangeNotifier {
   String systemPrompt =
       'You are a helpful voice assistant. Keep responses concise.';
 
+  /// Built-in tools the on-device LLM may call: 'voice' (the SDK's
+  /// default: weather, time, web search, Wikipedia, the calculator and
+  /// the phone actions, which open system UI for the user to confirm),
+  /// 'web' (weather, time, web search), 'phone', or 'none'. Matches the
+  /// voice_agent example.
+  String llmTools = 'voice';
+
   // ── LLM provider ─────────────────────────────────────────────────────────
   // local: llm_model is the on-device LLM's HF repo id (see [hfLlmRepo]); the
   // agent runs it with thinking off.
@@ -228,6 +235,7 @@ class VoiceAgentSettings extends ChangeNotifier {
         },
         'system_prompt': systemPrompt,
         'max_tokens': maxTokens,
+        'llm_tools': llmTools,
 
         // ── VAD / endpointing ──
         'vad_threshold': vadThreshold,

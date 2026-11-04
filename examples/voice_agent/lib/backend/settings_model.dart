@@ -78,7 +78,7 @@ class VoiceAgentSettings extends ChangeNotifier {
   String systemPrompt = '''
 You are a short on-device voice assistant. Answer in complete sentences. Use the user's language.
 
-Tools are only for live facts the user asked for (weather, time, search). Greetings, chit-chat, and opinions: answer yourself — no tool, no filler, no city, no weather.
+Use a tool only when the user asks for it or for a fact you must look up: live facts (weather, time, search), an encyclopedia summary, arithmetic, or a phone action the user asked for (call, map, message, e-mail). Greetings, chit-chat, and opinions: answer yourself — no tool, no filler, no city, no weather.
 
 Tool pattern (always):
 1) Need a tool? One short filler, then the exact markup from the tools section (do not speak the markup).
@@ -88,14 +88,16 @@ Tool pattern (always):
 Never invent facts. Never name a place, time, or number the user did not ask and the tool did not return. Never read JSON aloud. Never stop after one word.
 '''.trim();
 
-  /// Built-in tool preset for the on-device LLM: none | voice | web |
-  /// phone | live. Default `web` is the three live-fact tools (weather,
-  /// time, search). `voice` adds Wikipedia, a calculator and phone
-  /// actions (dialer, maps, SMS, e-mail, clipboard, battery). Weather
-  /// and search send the city / query to Open-Meteo, DuckDuckGo and
-  /// Wikipedia. An OpenAI-compatible endpoint gets no tools.
-  String llmTools = 'web';
-  static const availableLlmTools = ['web', 'voice', 'phone', 'live', 'none'];
+  /// Built-in tool preset for the on-device LLM: voice | web | phone |
+  /// live | none. Default `voice`, the SDK's own default: weather, time,
+  /// web search, Wikipedia, the calculator and the phone actions
+  /// (dialer, maps, SMS, e-mail, clipboard, battery — each opens system
+  /// UI for the user to confirm). `web` / `live` keep only weather, time
+  /// and search. Weather and search send the city / query to Open-Meteo,
+  /// DuckDuckGo and Wikipedia. An OpenAI-compatible endpoint gets no
+  /// tools.
+  String llmTools = 'voice';
+  static const availableLlmTools = ['voice', 'web', 'phone', 'live', 'none'];
 
   // ── LLM provider ─────────────────────────────────────────────────────────
   // local: llm_model is the on-device LLM's HF repo id (see [hfLlmRepo]); the

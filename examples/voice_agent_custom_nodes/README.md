@@ -71,7 +71,8 @@ recorder and event log.
   afterwards. Stopping the agent mid-caption waits for that caption to
   finish before the node is torn down.
   `thinking`, `tool_calling` and `speaking` are active states.
-- The on-device LLM gets the SDK's built-in `voice` tools (the config
-  sends no `llm_tools`); a tool call shows as `Calling tool...`.
+- The on-device LLM gets the SDK's built-in `voice` tools (all of
+  them: weather, time, web search, Wikipedia, the calculator and the
+  phone actions); a tool call shows as `Calling tool...`.
 - The screen recorder mixes mic (left) and assistant TTS (right) into a
   stereo track so a recorded demo carries both sides of the conversation.

@@ -13,9 +13,10 @@ and TTS streaming back through NeuTTS (`neutts-nano-multilingual`).
   cloud provider (OpenAI-compatible) reached over HTTPS — pick it in
   Settings, or change the LLM fields in
   `lib/backend/settings_model.dart`.
-- Tool calling: the on-device LLM checks weather, local time and the
-  web mid-reply (`llm_tools`, default `web` here; `voice` adds
-  Wikipedia, a calculator and phone actions). The status line shows
+- Tool calling: the on-device LLM calls tools mid-reply (`llm_tools`,
+  default `voice`: weather, local time, web search, Wikipedia, a
+  calculator and phone actions; `web` keeps only weather, time and
+  search). The status line shows
   `Calling tool...` and each call and result appears as a small
   monospace line in the chat; only the answer is spoken.
 - Streaming NeuTTS playback with barge-in: speak over the reply to
@@ -78,10 +79,10 @@ answers.
   agent has started (a short default list before that).
 - Settings holds the VAD, turn-detection, barge-in and AEC knobs; they
   apply at the next Start (the interrupt knobs also apply live).
-- With `llm_tools: web`, a city name or search query you ask about is
-  sent to Open-Meteo, DuckDuckGo or Wikipedia; set Tools to `none` in
-  Settings to keep every request on the phone. The `voice` and `phone`
-  presets open other apps (dialer, maps, SMS) for you to confirm.
+- A city name or search query you ask about is sent to Open-Meteo,
+  DuckDuckGo or Wikipedia; set Tools to `none` in Settings to keep
+  every request on the phone. The `voice` and `phone` presets open
+  other apps (dialer, maps, SMS) for you to confirm.
 - With the default on-device LLM, everything runs on the phone after
   the first model downloads; the cloud provider adds one network hop
   per reply.

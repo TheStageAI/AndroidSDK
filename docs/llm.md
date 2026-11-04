@@ -720,7 +720,7 @@ What they do and where data goes:
 | Tool | Runs | Sends |
 |---|---|---|
 | `get_weather`, `get_local_time` | [Open-Meteo](https://open-meteo.com) geocoding and forecast (no API key) | The city name |
-| `web_search` | DuckDuckGo (the results page, then the Instant Answer API), then Wikipedia search | The query |
+| `web_search` | DuckDuckGo (the results page, then its lite page, then the Instant Answer API), then Wikipedia search — or your own backend, below | The query |
 | `wikipedia_summary` | Wikipedia REST summary (en.wikipedia.org) | The title |
 | `calculate` | On device | Nothing |
 | phone tools | On device: they open the browser, dialer, maps, SMS or e-mail composer for the user to confirm (the dialer opens; it never places a call), copy to the clipboard, read the battery | Nothing |
@@ -740,6 +740,30 @@ What they do and where data goes:
 - From Flutter the built-in tools are not callable as Dart functions;
   run your own Dart code in the tool loop. The
   [voice agent](./voice_agent.md) uses the built-in sets for you.
+
+#### Your own search backend
+
+`web_search` needs no API key because it reads a search engine's
+public results pages. That is right for a demo and for a device with
+no key to spend, but it is not something to ship a product against:
+the engine answers a burst of queries with its anti-bot page, and
+the keyless fallbacks behind it only cover encyclopedic questions.
+The SDK softens this — one answer is reused for a minute, requests
+are spaced out, a refused page is retried once, and after a refusal
+the tool tells the model to answer from its own knowledge instead of
+calling it again — but a real search API is the fix:
+
+```kotlin
+DefaultTools.web_search_provider = WebSearchProvider { query ->
+    my_search_api.answer(query)   // null when there is none
+}
+```
+
+The provider replaces the lookup only. The answer cache, the
+cool-off after a failure and the logging stay in place, so returning
+null (or throwing) behaves the same as the built-in chain finding
+nothing. Keep the text to a few hundred characters: it enters the
+model's context on every tool round.
 
 ### Reliable calls from a small model
 
