@@ -39,7 +39,7 @@ class TranscriptArea extends StatelessWidget {
         controller.partialTranscript.isNotEmpty;
 
     if (!hasContent) {
-      if (controller.state == TheStageAgentState.loading) {
+      if (controller.state == TSAgentState.loading) {
         return Center(child: LoadingChecklist(controller: controller));
       }
       return Center(

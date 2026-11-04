@@ -4,9 +4,9 @@ import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 import 'backend/settings_model.dart';
 import 'ui/voice_chat_screen.dart';
 
-// Secrets are injected at build/run time via:
-//   flutter run --dart-define-from-file=../secrets.json
-// See `test_apps/secrets.example.json` for the schema.
+// Secrets come from this app's secrets.json (TS_API_TOKEN, and
+// OPENAI_API_KEY for the cloud LLM), injected at build/run time via:
+//   flutter run --dart-define-from-file=secrets.json
 const _apiToken = String.fromEnvironment('TS_API_TOKEN');
 const _openAIKey = String.fromEnvironment('OPENAI_API_KEY');
 
@@ -48,7 +48,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _agent = TheStageVoiceAgentFlutter();
+  final _agent = TSVoiceAgent();
   final _settings = VoiceAgentSettings();
   bool _initialized = false;
   String? _initError;
@@ -70,20 +70,14 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _initError =
             'TS_API_TOKEN not set.\n'
-            'Run with: flutter run '
-            '--dart-define-from-file=../secrets.json';
+            'Put it in this app\'s secrets.json, then run:\n'
+            'flutter run --dart-define-from-file=secrets.json';
       });
       return;
     }
-    if (_openAIKey.isEmpty) {
-      setState(() {
-        _initError =
-            'OPENAI_API_KEY not set.\n'
-            'Run with: flutter run '
-            '--dart-define-from-file=../secrets.json';
-      });
-      return;
-    }
+    // OPENAI_API_KEY is optional: only the remote
+    // (openai_compatible) LLM provider needs it; the default is the
+    // on-device LLM.
     try {
       await TheStageFlutterSDK.initialize(api_token: _apiToken);
       setState(() => _initialized = true);

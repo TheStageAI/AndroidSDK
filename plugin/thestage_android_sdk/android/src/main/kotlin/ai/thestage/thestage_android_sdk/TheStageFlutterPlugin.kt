@@ -8,32 +8,44 @@ import ai.thestage.thestage_android_sdk.handlers.__handle_audio_pause
 import ai.thestage.thestage_android_sdk.handlers.__handle_audio_resume
 import ai.thestage.thestage_android_sdk.handlers.__handle_audio_start
 import ai.thestage.thestage_android_sdk.handlers.__handle_audio_stop
+import ai.thestage.thestage_android_sdk.handlers.__handle_available_updates
 import ai.thestage.thestage_android_sdk.handlers.__handle_bundled_engine_path
 import ai.thestage.thestage_android_sdk.handlers.__handle_check_model_availability
 import ai.thestage.thestage_android_sdk.handlers.__handle_finish_stream
 import ai.thestage.thestage_android_sdk.handlers.__handle_infer
 import ai.thestage.thestage_android_sdk.handlers.__handle_initialize
+import ai.thestage.thestage_android_sdk.handlers.__handle_installed_models
 import ai.thestage.thestage_android_sdk.handlers.__handle_list_components
 import ai.thestage.thestage_android_sdk.handlers.__handle_load_components
 import ai.thestage.thestage_android_sdk.handlers.__handle_memory_footprint
 import ai.thestage.thestage_android_sdk.handlers.__handle_prefetch_model
+import ai.thestage.thestage_android_sdk.handlers.__handle_remove_model
+import ai.thestage.thestage_android_sdk.handlers.__handle_maintain_models
+import ai.thestage.thestage_android_sdk.handlers.__handle_reset_models
+import ai.thestage.thestage_android_sdk.handlers.__handle_repair_model
+import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_is_recording
+import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_start
+import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_stop
 import ai.thestage.thestage_android_sdk.handlers.__handle_send_stream
 import ai.thestage.thestage_android_sdk.handlers.__handle_start_model
 import ai.thestage.thestage_android_sdk.handlers.__handle_start_stream
 import ai.thestage.thestage_android_sdk.handlers.__handle_stop_model
 import ai.thestage.thestage_android_sdk.handlers.__handle_stop_stream
+import ai.thestage.thestage_android_sdk.handlers.__handle_stream_append
+import ai.thestage.thestage_android_sdk.handlers.__handle_stream_cancel
+import ai.thestage.thestage_android_sdk.handlers.__handle_stream_finish
 import ai.thestage.thestage_android_sdk.handlers.__handle_unload_components
-import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_clear_history
+import ai.thestage.thestage_android_sdk.handlers.__handle_update_available
+import ai.thestage.thestage_android_sdk.handlers.__handle_verify_model
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_begin_listening
+import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_clear_history
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_enroll_speaker
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_interrupt
+import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_publish_node_event
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_say
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_send_node_port
-import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_publish_node_event
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_send_request
-import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_is_recording
-import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_start
-import ai.thestage.thestage_android_sdk.handlers.__handle_screen_recorder_stop
+import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_set_system_prompt
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_set_voice
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_start
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_stop
@@ -111,6 +123,7 @@ class TheStageFlutterPlugin :
     private lateinit var __va_llm_deltas_channel: EventChannel
     private lateinit var __va_transcripts_channel: EventChannel
     private lateinit var __va_vad_probs_channel: EventChannel
+    private lateinit var __va_tts_levels_channel: EventChannel
     private lateinit var __va_ports_channel: EventChannel
     private lateinit var __va_nodes_channel: MethodChannel
     private lateinit var __logs_channel: EventChannel
@@ -152,7 +165,7 @@ class TheStageFlutterPlugin :
 
         // Voice-agent state stream backs the main
         // `voice_agent_events` channel and owns the agent;
-        // the three broadcast streams tap its flows.
+        // the four broadcast streams tap its flows.
         val va_handler = VoiceAgentStateStream(__scope)
         __va_events_channel = EventChannel(
             binding.binaryMessenger,
@@ -196,6 +209,18 @@ class TheStageFlutterPlugin :
         )
         __va_vad_probs_channel.setStreamHandler(vad_probs)
         va_handler.register_tap(vad_probs)
+
+        val tts_levels = VoiceAgentBroadcastStream(
+            scope = __scope,
+            agent_provider = { va_handler.agent },
+            port = { agent -> agent.tts_levels },
+        )
+        __va_tts_levels_channel = EventChannel(
+            binding.binaryMessenger,
+            MethodChannels.VOICE_AGENT_TTS_LEVELS,
+        )
+        __va_tts_levels_channel.setStreamHandler(tts_levels)
+        va_handler.register_tap(tts_levels)
 
         // Port multiplexer: one `{port, value}` stream carrying the
         // built-in channels plus any custom node port. Bound to the
@@ -257,6 +282,7 @@ class TheStageFlutterPlugin :
         __va_llm_deltas_channel.setStreamHandler(null)
         __va_transcripts_channel.setStreamHandler(null)
         __va_vad_probs_channel.setStreamHandler(null)
+        __va_tts_levels_channel.setStreamHandler(null)
         __va_ports_channel.setStreamHandler(null)
         __va_nodes_channel.setMethodCallHandler(null)
         __logs_channel.setStreamHandler(null)
@@ -342,6 +368,22 @@ class TheStageFlutterPlugin :
                 __handle_unload_components(call, result)
             MethodRoute.BUNDLED_ENGINE_PATH ->
                 __handle_bundled_engine_path(call, result)
+            MethodRoute.INSTALLED_MODELS ->
+                __handle_installed_models(call, result)
+            MethodRoute.AVAILABLE_UPDATES ->
+                __handle_available_updates(call, result)
+            MethodRoute.UPDATE_AVAILABLE ->
+                __handle_update_available(call, result)
+            MethodRoute.REMOVE_MODEL ->
+                __handle_remove_model(call, result)
+            MethodRoute.VERIFY_MODEL ->
+                __handle_verify_model(call, result)
+            MethodRoute.REPAIR_MODEL ->
+                __handle_repair_model(call, result)
+            MethodRoute.MAINTAIN_MODELS ->
+                __handle_maintain_models(result)
+            MethodRoute.RESET_MODELS ->
+                __handle_reset_models(result)
             MethodRoute.MEMORY_FOOTPRINT ->
                 __handle_memory_footprint(call, result)
 
@@ -350,6 +392,12 @@ class TheStageFlutterPlugin :
                 __handle_infer(call, result)
             MethodRoute.START_STREAM ->
                 __handle_start_stream(call, result)
+            MethodRoute.STREAM_APPEND ->
+                __handle_stream_append(call, result)
+            MethodRoute.STREAM_FINISH ->
+                __handle_stream_finish(call, result)
+            MethodRoute.STREAM_CANCEL ->
+                __handle_stream_cancel(call, result)
             MethodRoute.SEND ->
                 __handle_send_stream(call, result)
             MethodRoute.FINISH_STREAM ->
@@ -398,6 +446,8 @@ class TheStageFlutterPlugin :
                 __handle_voice_agent_publish_node_event(call, result)
             MethodRoute.VOICE_AGENT_SEND_REQUEST ->
                 __handle_voice_agent_send_request(call, result)
+            MethodRoute.VOICE_AGENT_SET_SYSTEM_PROMPT ->
+                __handle_voice_agent_set_system_prompt(call, result)
             MethodRoute.SCREEN_RECORDER_IS_RECORDING ->
                 __handle_screen_recorder_is_recording(call, result)
             MethodRoute.SCREEN_RECORDER_START ->

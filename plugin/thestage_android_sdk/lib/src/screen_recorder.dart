@@ -9,8 +9,8 @@ import 'method_channels.dart';
 /// carries both sides of the conversation. Requesting `start()` triggers
 /// the one-time system screen-capture consent dialog; a foreground
 /// service keeps the capture alive while recording.
-class TheStageScreenRecorder {
-  TheStageScreenRecorder._();
+class TSScreenRecorder {
+  TSScreenRecorder._();
 
   static const MethodChannel _channel = MethodChannel(MethodChannels.main);
 

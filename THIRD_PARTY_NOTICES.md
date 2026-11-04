@@ -82,12 +82,14 @@ engines) are covered by the top-level [LICENSE](./LICENSE).
   license terms. **Not redistributed by this SDK.**
 - **Use:** the Hexagon NPU (HTP) backend. The signed per-SoC QNN HTP
   skel/stub libraries are pulled by the consumer app from Qualcomm's
-  public Maven repository (`com.qualcomm.qti:qnn-runtime:2.42.0`). The
-  four Genie backend libraries (`libQnnGenAiTransformer.so`,
-  `libQnnGenAiTransformerCpuOpPkg.so`,
-  `libQnnGenAiTransformerModel.so`, `libQnnCpu.so`) are **not** on
+  public Maven repository (`com.qualcomm.qti:qnn-runtime:2.51.0`). The
+  optional `GenAiTransformer` Genie backend libraries
+  (`libQnnGenAiTransformer.so`,
+  `libQnnGenAiTransformerModel.so`, `libQnnCpu.so`, and on QAIRT
+  releases that still ship it `libQnnGenAiTransformerCpuOpPkg.so`)
+  are **not** on
   Maven and are **not** shipped here — the consumer must copy them
-  from their own Qualcomm QAIRT 2.42 SDK install (see the top-level
+  from their own Qualcomm QAIRT 2.51 SDK install (see the top-level
   `README.md` and `scripts/setup.sh`). Your use of these libraries is
   governed by Qualcomm's license, not by this SDK's license.
 - **Project:** https://qpm-download.qualcomm.com / Qualcomm AI Engine

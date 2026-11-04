@@ -1,7 +1,7 @@
 name: engine_bench
 description: "EngineBench - benchmark on-device engines (LLM / TTS / ASR / VLM) with the TheStage Android SDK."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+1
 
 environment:
   sdk: ^3.5.0

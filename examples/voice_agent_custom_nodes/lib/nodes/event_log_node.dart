@@ -2,11 +2,11 @@ import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 /// Teaching example: listen to the internal agent bus via [onEvent].
 ///
-/// Attached to the native graph through `agent.start(extraNodes: [...])`.
+/// Attached to the native graph through `agent.start(extra_nodes: [...])`.
 /// Every bus event the agent publishes (state changes, transcripts,
 /// deltas, errors, custom-node ports) is forwarded to [onBusEvent] so the
 /// host can render a live event log without knowing the SDK internals.
-class EventLogNode extends TheStageAgentNode {
+class EventLogNode extends TSAgentNode {
   EventLogNode({
     this.id = 'event_log',
     this.onBusEvent,

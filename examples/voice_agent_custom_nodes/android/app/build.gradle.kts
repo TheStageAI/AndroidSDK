@@ -80,7 +80,7 @@ dependencies {
 
     // Qualcomm QNN Runtime (signed skel libraries).
     implementation(
-        "com.qualcomm.qti:qnn-runtime:2.42.0"
+        "com.qualcomm.qti:qnn-runtime:2.51.0"
     )
 
     // Transitive deps of TheStageCore

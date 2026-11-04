@@ -1,53 +1,28 @@
-# TheStage Android SDK — Product Terms
+# TheStage Android SDK Product Terms
 
-> **TODO(legal): terms pending legal review.** This page is an
-> integrator-facing summary, not a contract. The binding commercial
-> terms are the executed master agreement and the shipped `LICENSE`.
-> Nothing here is final until reviewed and approved by TheStage legal.
+Legal / commercial terms for the on-device Android SDK (Qualcomm
+Snapdragon).
 
-Commercial and licensing summary for the on-device Android SDK
-(Snapdragon / Qualcomm QNN HTP).
+The full supplemental **TheStage Android SDK Product Terms** live on
+the documentation site, parallel to the QLIP and Elastic
+Models product terms — page `android-sdk-product-terms` on
+[docs.thestage.ai](https://docs.thestage.ai/).
 
 ## What integrators need to know
 
 | Topic | Summary |
 |---|---|
 | Product | TheStage Android SDK — an AAR + Flutter plugin + TheStage engine bundles for on-device inference on Qualcomm Snapdragon |
-| Access | Requires an **API Token**; call `initialize` once before starting any model |
-| Seats | Billing key is the pair `(apiToken, deviceId)` — see [licensing.md](./licensing.md) |
-| **Pricing** | **By arrangement** — open a **Service Request** at [app.thestage.ai/contact](https://app.thestage.ai/contact). There is **no public rate card**. |
-| Redistribution | Governed by the master agreement and the shipped `LICENSE`; do not redistribute engine bundles outside your app |
-
-## Seat model (Android)
-
-A billable seat is the pair **`(apiToken, deviceId)`**:
-
-- The `apiToken` identifies you, the developer. Two unrelated apps on
-  the same physical device use different tokens and are billed
-  separately.
-- The `deviceId` identifies the device install. On Android it is a
-  random UUID the SDK generates on first use and stores in the app's
-  private `SharedPreferences`.
-
-Because that UUID lives in the app's private storage, it is **wiped on
-uninstall** unless the host app has **Android Auto Backup** enabled
-(`android:allowBackup="true"`), in which case the same `deviceId` is
-restored on reinstall. The backend reconciles brief
-uninstall/reinstall cycles so a short gap does not allocate a
-permanent extra seat. Full mechanics — online-validation behavior,
-reinstall behavior, and the server-side seat contract — are in
-[licensing.md](./licensing.md).
-
-## Pricing
-
-Pricing is arranged per engagement; there is no public rate card.
-Open a **Service Request** at
-[app.thestage.ai/contact](https://app.thestage.ai/contact) to discuss
-volumes and terms. Do not infer pricing from any figure in these docs.
+| Access | Requires an API Token; initialize before use |
+| Seats | `(apiToken, deviceId)` — see [licensing.md](./licensing.md) |
+| Delivery | Engine bundles download from Hugging Face or ship as Google Play AI packs — see [ai_packs.md](./ai_packs.md) |
+| Third-party runtime | Certain Qualcomm QAIRT runtime libraries are obtained from Qualcomm under Qualcomm's terms |
+| **Pricing** | **By arrangement** — open a **Service Request** at [app.thestage.ai/contact](https://app.thestage.ai/contact). No public rate card. |
+| Redistribution | Governed by the Product Terms + master agreement; see shipped `LICENSE` |
 
 ## Agent checklist
 
-- For legal / commercial questions, point to the master agreement and
-  the shipped `LICENSE`; never invent a rate card.
+- Link Product Terms for legal questions; do not invent rate cards.
 - Device-seat product facts → [licensing.md](./licensing.md).
-- Pricing is always a Service Request — no self-serve rate card.
+- Shipped package `LICENSE` points at these terms + contact for
+  pricing.

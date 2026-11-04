@@ -206,6 +206,18 @@ class FlutterBridgeNode(
                 "text" to event.text,
                 "reason" to event.reason.name.lowercase(),
             )
+        is AgentEvent.ToolStarted ->
+            mapOf(
+                "kind" to "TOOL_STARTED",
+                "name" to event.name,
+                "arguments" to event.arguments_json,
+            )
+        is AgentEvent.ToolEnded ->
+            mapOf(
+                "kind" to "TOOL_ENDED",
+                "name" to event.name,
+                "content" to event.content,
+            )
         is AgentEvent.SynthesisDone ->
             mapOf(
                 "kind" to "SYNTHESIS_DONE",

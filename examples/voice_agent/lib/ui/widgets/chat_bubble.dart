@@ -24,12 +24,16 @@ class MessageBubble extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final isUser = message.role == MessageRole.user;
     final isError = message.role == MessageRole.error;
+    final isTool = message.role == MessageRole.tool;
 
     final Color bgColor;
     final Color fgColor;
     if (isError) {
       bgColor = colorScheme.error;
       fgColor = colorScheme.onError;
+    } else if (isTool) {
+      bgColor = colorScheme.secondaryContainer;
+      fgColor = colorScheme.onSecondaryContainer;
     } else if (isUser) {
       bgColor = colorScheme.primary;
       fgColor = colorScheme.onPrimary;
@@ -49,6 +53,9 @@ class MessageBubble extends StatelessWidget {
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(16),
+          border: isTool
+              ? Border.all(color: fgColor.withValues(alpha: 0.35))
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -57,7 +64,11 @@ class MessageBubble extends StatelessWidget {
             Flexible(
               child: Text(
                 message.text,
-                style: TextStyle(color: fgColor, fontSize: 15),
+                style: TextStyle(
+                  color: fgColor,
+                  fontSize: isTool ? 12.5 : 15,
+                  fontFamily: isTool ? 'monospace' : null,
+                ),
               ),
             ),
             if (isStreaming) ...[

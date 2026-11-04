@@ -51,8 +51,7 @@ class TTSStreamStats {
 /// ```dart
 /// final tts = TTSController(
 ///   enginesPath: 'TheStageAI/neutts-multilingual',
-///   modelType: 'neutts-multilingual',
-///   revision: 'develop',
+///   modelType: 'neutts',
 /// );
 /// await tts.initialize();
 /// await tts.startStream('Hello world!');
@@ -65,7 +64,7 @@ class TTSController extends ChangeNotifier {
   final int sampleRate;
   final List<String> availableVoices;
 
-  final TheStageAudioPlayer _player;
+  final TSAudioPlayer _player;
 
   // -------------------------------------------------------------------------
   // State
@@ -75,7 +74,7 @@ class TTSController extends ChangeNotifier {
   String? _loadedVoice;
   bool _modelReady = false;
   bool _generating = false;
-  double _downloadProgress = 0.0;
+  double? _downloadProgress;
   String? _loadPhase;
   TTSStreamStats? _stats;
 
@@ -94,12 +93,18 @@ class TTSController extends ChangeNotifier {
   String get selectedVoice => _selectedVoice;
   bool get modelReady => _modelReady;
   bool get generating => _generating;
-  double get downloadProgress => _downloadProgress;
+  /// Transfer progress in `0..1`, or **null when the current phase has
+  /// no measurable progress** — which is every phase but `downloading`.
+  /// Render a determinate bar when this is non-null and an indeterminate
+  /// one when it is null.
+  double? get downloadProgress => _downloadProgress;
 
-  /// Current load phase: `downloading`, `extracting`, `loading`, `ready`,
-  /// or `null` when not loading. Only `downloading` carries a meaningful
-  /// [downloadProgress] fraction; the others are coarse/blocking, so render
-  /// an indeterminate indicator for them.
+  /// Current load phase: `downloading`, `waiting_for_wifi`,
+  /// `waiting_for_confirmation`, `extracting`, `loading`, `ready`, or
+  /// `null` when not loading.
+  ///
+  /// The two `waiting_*` phases mean an AI-pack download is parked and
+  /// the user can act — join Wi-Fi, or confirm a metered download.
   String? get loadPhase => _loadPhase;
   TTSStreamStats? get stats => _stats;
 
@@ -109,13 +114,18 @@ class TTSController extends ChangeNotifier {
   TTSController({
     this.modelName = 'neutts',
     this.enginesPath = 'TheStageAI/neutts-multilingual',
-    this.modelType = 'neutts-multilingual',
-    this.revision = 'develop',
+    // The bundles' own type (both NeuTTS families).
+    this.modelType = 'neutts',
+    // Empty resolves this repo's SDK-pinned commit. Pass a value
+    // only to test an unreleased bundle; a branch name overrides
+    // the pin and gives up the guarantee that the bytes cannot
+    // change under a shipped app.
+    this.revision = '',
     this.sampleRate = 24000,
     this.availableVoices = const ['dave', 'jo', 'paul', 'bril'],
     String? defaultVoice,
   })  : _selectedVoice = defaultVoice ?? 'dave',
-        _player = TheStageAudioPlayer(sampleRate: sampleRate);
+        _player = TSAudioPlayer(sampleRate: sampleRate);
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -134,7 +144,10 @@ class TTSController extends ChangeNotifier {
     // compile/load stage instead of sitting on "Downloading..." while the
     // backend prepares the model.
     final progressSub = TheStageFlutterSDK.on_progress.listen((event) {
-      _downloadProgress = (event['progress'] as num?)?.toDouble() ?? 0.0;
+      // Absent whenever the phase has no measurable progress, so a
+      // null here is the signal to show an indeterminate indicator --
+      // not a reason to reset the bar to zero.
+      _downloadProgress = (event['progress'] as num?)?.toDouble();
       _loadPhase = event['phase'] as String?;
       _setStatus(statusForPhase(_loadPhase));
     });
@@ -149,7 +162,7 @@ class TTSController extends ChangeNotifier {
     }
     await progressSub.cancel();
 
-    _downloadProgress = 0.0;
+    _downloadProgress = null;
     _loadPhase = null;
     _modelReady = true;
     _setStatus('Ready');
@@ -314,6 +327,10 @@ class TTSController extends ChangeNotifier {
     switch (phase) {
       case 'downloading':
         return 'Downloading engines...';
+      case 'waiting_for_wifi':
+        return 'Waiting for Wi-Fi...';
+      case 'waiting_for_confirmation':
+        return 'Confirm the download to continue';
       case 'extracting':
         return 'Extracting engines...';
       case 'loading':

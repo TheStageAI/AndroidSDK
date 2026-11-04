@@ -35,8 +35,8 @@ internal fun TheStageFlutterPlugin.__handle_voice_agent_start(
     // thread (ANR otherwise), matching __handle_start_model.
     __scope.launch(Dispatchers.Default) {
         try {
-            handler.start(config = config)
-            withContext(Dispatchers.Main) { result.success(null) }
+            val caps = handler.start(config = config)
+            withContext(Dispatchers.Main) { result.success(caps) }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) { __fail(result, e) }
         }
@@ -86,18 +86,63 @@ internal fun TheStageFlutterPlugin.__handle_voice_agent_set_voice(
     call: MethodCall,
     result: MethodChannel.Result,
 ) {
-    val args = call.arguments as? Map<*, *>
-    val voice = args?.get("voice") as? String
-    if (voice == null) {
-        __fail(result, "Missing voice.")
+    val args = parse_set_voice_args(call.arguments as? Map<*, *>)
+    if (args == null) {
+        __fail(result, "Pass voice_id, voice_dir or language.")
         return
     }
+    val handler = __voice_agent_handler
     __scope.launch(Dispatchers.Default) {
         try {
-            __voice_agent_handler?.set_voice(voice)
-        } catch (_: Throwable) {}
-        withContext(Dispatchers.Main) { result.success(null) }
+            handler?.set_voice(
+                voice_id = args.voice_id,
+                voice_dir = args.voice_dir,
+                language = args.language,
+            )
+            // The capabilities after the swap, so Dart's cached
+            // `capabilities` follows the live agent.
+            val caps = handler?.capabilities_payload()
+            withContext(Dispatchers.Main) { result.success(caps) }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { __fail(result, e) }
+        }
     }
+}
+
+/** `voice_agent.set_voice` arguments: any subset of voice_id /
+ *  voice_dir / language. The pre-`voice_dir` `{voice}` shape is
+ *  read as `voice_id`. */
+internal data class SetVoiceArgs(
+    val voice_id: String?,
+    val voice_dir: String?,
+    val language: String?,
+)
+
+/** Parse [SetVoiceArgs]; `null` when no field is given. */
+internal fun parse_set_voice_args(args: Map<*, *>?): SetVoiceArgs? {
+    val voice_id = (args?.get("voice_id") as? String)
+        ?: (args?.get("voice") as? String)
+    val voice_dir = args?.get("voice_dir") as? String
+    val language = args?.get("language") as? String
+    if (voice_id == null && voice_dir == null && language == null) {
+        return null
+    }
+    return SetVoiceArgs(voice_id, voice_dir, language)
+}
+
+internal fun
+    TheStageFlutterPlugin.__handle_voice_agent_set_system_prompt(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) {
+    val args = call.arguments as? Map<*, *>
+    val prompt = args?.get("system_prompt") as? String
+    if (prompt == null) {
+        __fail(result, "Missing system_prompt.")
+        return
+    }
+    __voice_agent_handler?.set_system_prompt(prompt)
+    result.success(null)
 }
 
 internal fun TheStageFlutterPlugin.__handle_voice_agent_clear_history(
@@ -166,7 +211,10 @@ internal fun TheStageFlutterPlugin.__handle_voice_agent_begin_listening(
     }
     __scope.launch(Dispatchers.Default) {
         try { handler.begin_listening() } catch (_: Throwable) {}
-        withContext(Dispatchers.Main) { result.success(null) }
+        // The mic is now armed (or not): return the recomputed
+        // capabilities so Dart's `listening` follows it.
+        val caps = handler.capabilities_payload()
+        withContext(Dispatchers.Main) { result.success(caps) }
     }
 }
 

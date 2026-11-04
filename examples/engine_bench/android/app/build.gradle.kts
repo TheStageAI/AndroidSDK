@@ -7,9 +7,11 @@ plugins {
 android {
     namespace = "ai.thestage.engine_bench"
     compileSdk = 36
+    // Pin the NDK the bundled plugins (jni / sonic / espeak-ng) build
+    // against — silences the AGP "plugin requires NDK 28.2" warning.
+    ndkVersion = "28.2.13676358"
 
-    // Genie: optional extra jni dir (Linux QAIRT sync or tarball unpack).
-    // Default staging path from sync_qairt_android_genie_libs.sh is
+    // Genie: optional extra jni dir. The default staging path is
     // src/main/jniLibs/arm64-v8a — no env needed. If you keep libs elsewhere:
     //   export QAIRT_ANDROID_JNI=/path/to/extra/jni
     sourceSets {
@@ -87,13 +89,25 @@ dependencies {
     implementation(
         files("$pluginLibs/onnxruntime-android.aar")
     )
-    implementation(
-        files("$pluginLibs/onnxruntime-genai-android.aar")
-    )
+    // ort-genai powers the LLM bench only, and that tab is greyed
+    // out until an on-device chat-LLM bundle ships (see
+    // lib/main.dart). The AAR is also not part of the public SDK
+    // tree -- it is not in `make_dist.sh`'s AAR list and not
+    // covered by the published third-party notices -- so a hard
+    // dependency here made the app unbuildable from a public
+    // checkout while the feature needing it was disabled anyway.
+    //
+    // Optional: present in this repo, so re-enabling the LLM tab
+    // works with no gradle change; absent in the public tree,
+    // where the other three benches build and run.
+    val genai = file("$pluginLibs/onnxruntime-genai-android.aar")
+    if (genai.exists()) {
+        implementation(files(genai))
+    }
 
     // Qualcomm QNN Runtime (signed skel libraries).
     implementation(
-        "com.qualcomm.qti:qnn-runtime:2.42.0"
+        "com.qualcomm.qti:qnn-runtime:2.51.0"
     )
 
     // TFLite (for litert mode)

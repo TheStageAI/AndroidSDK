@@ -16,6 +16,8 @@ class MethodChannels {
       'thestage_android_sdk/voice_agent_transcripts';
   static const String voiceAgentVADProbabilities =
       'thestage_android_sdk/voice_agent_vad_probabilities';
+  static const String voiceAgentTTSLevels =
+      'thestage_android_sdk/voice_agent_tts_levels';
   static const String voiceAgentPorts =
       'thestage_android_sdk/voice_agent_ports';
   static const String voiceAgentNodes =
@@ -41,11 +43,28 @@ class MethodRoute {
 
   static const String memoryFootprint = 'memory_footprint';
 
+  // Model lifecycle.
+  static const String installedModels = 'installed_models';
+  static const String availableUpdates = 'available_updates';
+  static const String updateAvailable = 'update_available';
+  static const String removeModel = 'remove_model';
+  static const String verifyModel = 'verify_model';
+  static const String repairModel = 'repair_model';
+  static const String maintainModels = 'maintain_models';
+  static const String resetModels = 'reset_models';
+
   static const String infer = 'infer';
   static const String startStream = 'start_stream';
   static const String send = 'send';
   static const String finishStream = 'finish_stream';
   static const String stopStream = 'stop_stream';
+
+  // Push input INTO a live infer_stream session (ASR).
+  // Distinct from the four above, which drive the TTS
+  // text streamer.
+  static const String streamAppend = 'stream_append';
+  static const String streamFinish = 'stream_finish';
+  static const String streamCancel = 'stream_cancel';
 
   static const String audioStart = 'audio_start';
   static const String audioEnqueue = 'audio_enqueue';
@@ -73,6 +92,8 @@ class MethodRoute {
       'voice_agent.publish_node_event';
   static const String voiceAgentSendRequest =
       'voice_agent.send_request';
+  static const String voiceAgentSetSystemPrompt =
+      'voice_agent.set_system_prompt';
 
   static const String screenRecorderIsRecording =
       'screen_recorder.is_recording';

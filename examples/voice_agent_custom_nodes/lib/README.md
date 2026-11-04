@@ -14,7 +14,7 @@ lib/
   main.dart                         App entry: init SDK, gate on secrets.
   models/
     chat_message.dart               Plain data: ChatMessage + MessageRole.
-  nodes/                            App-local custom nodes (extraNodes recipes).
+  nodes/                            App-local custom nodes (extra_nodes recipes).
     event_log_node.dart             Mirrors the internal bus via onEvent.
     vlm_caption_node.dart           Captions an image (ephemeral lfm2-vl).
   backend/                          Everything that talks to the SDK.
@@ -25,7 +25,7 @@ lib/
     settings_model.dart             User knobs + toConfig() (LLM/ASR/TTS wiring).
   ui/                               Pure rendering. Never touches the SDK.
     voice_chat_screen.dart          Composition: owns controller, wires buttons.
-    custom_nodes_screen.dart        Event log + VLM caption + sendRequest + record.
+    custom_nodes_screen.dart        Event log + VLM caption + send_request + record.
     settings_screen.dart            Settings form bound to VoiceAgentSettings.
     widgets/
       transcript_area.dart          Chat list + startup model checklist.
@@ -42,7 +42,7 @@ directly.
 
 ## Custom nodes
 
-The two nodes under `nodes/` are attached at `agent.start(extraNodes: […])`
+The two nodes under `nodes/` are attached at `agent.start(extra_nodes: […])`
 in `VoiceAgentController.start`:
 
 - **`EventLogNode`** (`runWhen: []`, always gated open) — every bus event
@@ -105,8 +105,10 @@ state change repaints the relevant bubbles.
 `VoiceAgentSettings.toConfig()` builds the `config` map passed to
 `agent.start(config:)`. It's grouped by subsystem:
 
-- **LLM** — `llm_provider` / `llm_model` / `llm_endpoint` / `llm_api_key` /
-  `system_prompt` / `max_tokens` / `temperature`.
+- **LLM** — `llm_provider` / `llm_model` / `llm` (the on-device engines) /
+  `llm_endpoint` / `llm_api_key` / `system_prompt` / `max_tokens` /
+  `temperature`. The default provider is `local`: the on-device
+  `TheStageAI/LFM2.5-350M` (others in the picker), run with thinking off.
 - **ASR** — `stt` (Whisper), `stt_language`, `asr_streaming` (live captions),
   plus the `turn_*` keys for neural (smart-turn) end-of-turn detection.
 - **TTS** — `tts` (NeuTTS), `tts_voice`.

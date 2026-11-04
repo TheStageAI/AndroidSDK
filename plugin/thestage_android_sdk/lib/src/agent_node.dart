@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 // ---------------------------------------------------------------------------
 // AgentNodeContext
 // ---------------------------------------------------------------------------
-/// Per-invocation handle passed to a [TheStageAgentNode]'s lifecycle
+/// Per-invocation handle passed to a [TSAgentNode]'s lifecycle
 /// hooks. Carries the node's current gate state and the I/O helpers for
 /// talking to its native ports.
 class AgentNodeContext {
@@ -44,12 +44,12 @@ class AgentNodeContext {
 }
 
 // ---------------------------------------------------------------------------
-// TheStageAgentNode
+// TSAgentNode
 // ---------------------------------------------------------------------------
 /// Base class for a custom Dart agent node appended to the native graph
-/// via `extraNodes`. The native side hosts a `FlutterBridgeNode` twin
+/// via `extra_nodes`. The native side hosts a `FlutterBridgeNode` twin
 /// that forwards lifecycle hooks here over the nodes channel.
-abstract class TheStageAgentNode {
+abstract class TSAgentNode {
   String get id;
 
   /// Agent states in which the node's gate is open (empty = always).
@@ -77,7 +77,7 @@ abstract class TheStageAgentNode {
 // VoiceAgentNodeDispatcher
 // ---------------------------------------------------------------------------
 /// Routes native node-lifecycle callbacks (`voice_agent.node_on_*`) to
-/// the matching [TheStageAgentNode]. Owns the nodes [MethodChannel]
+/// the matching [TSAgentNode]. Owns the nodes [MethodChannel]
 /// handler for the lifetime of a running agent.
 class VoiceAgentNodeDispatcher {
   VoiceAgentNodeDispatcher({
@@ -101,9 +101,9 @@ class VoiceAgentNodeDispatcher {
   _sendNodePort;
   final Future<void> Function(String nodeId, Map<String, dynamic> event)
   _publishNodeEvent;
-  final Map<String, TheStageAgentNode> _nodes = {};
+  final Map<String, TSAgentNode> _nodes = {};
 
-  void registerNodes(List<TheStageAgentNode> nodes) {
+  void registerNodes(List<TSAgentNode> nodes) {
     _nodes
       ..clear()
       ..addEntries(nodes.map((node) => MapEntry(node.id, node)));

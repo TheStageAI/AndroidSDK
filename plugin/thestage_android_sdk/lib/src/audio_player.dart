@@ -5,11 +5,11 @@ import 'package:flutter/services.dart';
 import 'method_channels.dart';
 
 // ---------------------------------------------------------------------------
-// TheStageAudioPlayer
+// TSAudioPlayer
 // ---------------------------------------------------------------------------
 /// Streaming PCM player backed by the native `AudioStreamPlayer` via the
 /// `audio_*` routes. Each instance owns a unique `player_id`.
-class TheStageAudioPlayer {
+class TSAudioPlayer {
   static const MethodChannel _channel = MethodChannel(MethodChannels.main);
   static int _nextId = 0;
 
@@ -17,7 +17,7 @@ class TheStageAudioPlayer {
   final String _id;
   bool _playing = false;
 
-  TheStageAudioPlayer({this.sampleRate = 24000})
+  TSAudioPlayer({this.sampleRate = 24000})
       : _id = 'audio_${_nextId++}_${DateTime.now().microsecondsSinceEpoch}';
 
   bool get isPlaying => _playing;

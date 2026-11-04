@@ -4,15 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 import '../backend/bench_session.dart';
+import '../backend/load_state.dart';
 import '../backend/sdk_host.dart';
 import '../widgets/bench_widgets.dart';
 
 // ----------------------------------------------------------------------
 // LLM catalog
 // ----------------------------------------------------------------------
-// On-device text LLMs driven through the generic `thestage_llm`
-// pipeline (same path as the llm_chat example). Engines load from
-// Hugging Face on first use; the SDK downloads + caches per model.
+// On-device text LLMs driven through the generic `the-stage-llm`
+// model type. Engines load from Hugging Face on first use; the SDK
+// downloads + caches per model.
 class _LlmModel {
   const _LlmModel(this.id, this.displayName, this.repo);
   final String id;
@@ -22,13 +23,19 @@ class _LlmModel {
 
 const _llmRevision = String.fromEnvironment(
   'LLM_REVISION',
-  defaultValue: 'android',
+  defaultValue: '',
 );
 
 const _llmModels = [
-  _LlmModel('qwen3-0.6b', 'Qwen3 0.6B', 'TheStageAI/Qwen3-0.6B'),
-  _LlmModel('lfm2.5-350m', 'LFM2.5 350M', 'TheStageAI/LFM2.5-350M'),
   _LlmModel('lfm2.5-230m', 'LFM2.5 230M', 'TheStageAI/LFM2.5-230M'),
+  _LlmModel('lfm2.5-350m', 'LFM2.5 350M', 'TheStageAI/LFM2.5-350M'),
+  _LlmModel('lfm2.5-1.2b', 'LFM2.5 1.2B', 'TheStageAI/LFM2.5-1.2B'),
+  _LlmModel('lfm3-1.7b', 'LFM3 1.7B', 'TheStageAI/LFM3-1.7B'),
+  _LlmModel('qwen3.5-0.8b', 'Qwen3.5 0.8B', 'TheStageAI/Qwen3.5-0.8B'),
+  _LlmModel('qwen3.5-2b', 'Qwen3.5 2B', 'TheStageAI/Qwen3.5-2B'),
+  _LlmModel('qwen3.5-4b', 'Qwen3.5 4B', 'TheStageAI/Qwen3.5-4B'),
+  // 8 Elite and 8 Elite Gen 5 only.
+  _LlmModel('qwen3.5-9b', 'Qwen3.5 9B', 'TheStageAI/Qwen3.5-9B'),
 ];
 
 // ----------------------------------------------------------------------
@@ -46,7 +53,12 @@ class _LlmTabState extends State<LlmTab> {
   static const _warmupRuns = 2;
 
   _LlmModel _selected = _llmModels.first;
-  String? _loadedId;
+  // The loaded model and its MTP choice (see [loadKey]).
+  String? _loadedKey;
+  // MTP (the bundle's drafter); changing it reloads the model.
+  bool _mtp = true;
+  // From the start_model status: the loaded model has a drafter.
+  bool _mtpSupported = false;
 
   final _promptCtl =
       TextEditingController(text: 'List 25 facts about London.');
@@ -58,7 +70,7 @@ class _LlmTabState extends State<LlmTab> {
   String _statsLine = '';
   String _output = '';
   String? _loadPhase;
-  double _loadFraction = 0;
+  double? _loadFraction;
   StreamSubscription<Map<String, dynamic>>? _progressSub;
 
   @override
@@ -79,25 +91,33 @@ class _LlmTabState extends State<LlmTab> {
   }
 
   Future<void> _ensureModel(_LlmModel m) async {
-    if (_loadedId == m.id) return;
+    final key = loadKey(m.repo, mtp: _mtp);
+    if (_loadedKey == key) return;
     await SdkHost.instance.ensureInitialized();
     await _stopModel();
+    // Nothing is loaded under the handle any more: a failed start
+    // below must not leave the old key claiming it is.
+    _loadedKey = null;
     _progressSub = TheStageFlutterSDK.on_progress.listen((e) {
-      if (!mounted) return;
+      if (!mounted || !isProgressFor(e, _modelName)) return;
       setState(() {
         _loadPhase = e['phase'] as String?;
-        _loadFraction = (e['progress'] as num?)?.toDouble() ?? 0;
+        _loadFraction = (e['progress'] as num?)?.toDouble();
       });
     });
     try {
-      await TheStageFlutterSDK.start_model(
-        model_type: 'thestage_llm',
+      final status = await TheStageFlutterSDK.start_model(
+        model_type: 'the-stage-llm',
         model_name: _modelName,
         engines_path: m.repo,
         revision: _llmRevision,
-        device: 'npu',
+        config: {'use_mtp': _mtp},
       );
-      _loadedId = m.id;
+      _loadedKey = key;
+      final mtp = (status['features'] as Map?)?['mtp'] as Map?;
+      if (mounted) {
+        setState(() => _mtpSupported = mtp?['supported'] == true);
+      }
     } finally {
       await _progressSub?.cancel();
       _progressSub = null;
@@ -124,9 +144,7 @@ class _LlmTabState extends State<LlmTab> {
       setState(() => _status = 'generating...');
       final stream = TheStageFlutterSDK.infer_stream(
         model_name: _modelName,
-        input_json: {
-          'inputs': {'prompt': prompt, 'max_new_tokens': _maxNew},
-        },
+        input_json: {'inputs': _inputs(prompt)},
       );
       await for (final chunk in stream) {
         final delta = chunk['delta']?.toString() ?? '';
@@ -141,7 +159,7 @@ class _LlmTabState extends State<LlmTab> {
           final tokens =
               (chunk['generated_tokens'] as num?)?.toInt() ?? 0;
           setState(() {
-            _statsLine = '${m.displayName} - $tokens tok - '
+            _statsLine = '${_label(m)} - $tokens tok - '
                 'decode ${tps.toStringAsFixed(1)} tok/s - '
                 'TTFT ${ttftMs.toStringAsFixed(0)} ms';
             _status = 'done';
@@ -161,9 +179,7 @@ class _LlmTabState extends State<LlmTab> {
   Future<Map<String, dynamic>> _runInferSilent(String prompt) async {
     final stream = TheStageFlutterSDK.infer_stream(
       model_name: _modelName,
-      input_json: {
-        'inputs': {'prompt': prompt, 'max_new_tokens': _maxNew},
-      },
+      input_json: {'inputs': _inputs(prompt)},
     );
     Map<String, dynamic> last = const {};
     await for (final chunk in stream) {
@@ -207,7 +223,7 @@ class _LlmTabState extends State<LlmTab> {
       final med = median(tokS) ?? 0;
       BenchSession.instance.add(BenchRecord(
         kind: 'llm',
-        model: m.displayName,
+        model: _label(m),
         runs: n,
         prompt: prompt,
         maxNewTokens: _maxNew,
@@ -221,7 +237,7 @@ class _LlmTabState extends State<LlmTab> {
         perRun: {'tok_s': tokS, 'ttft_ms': ttftMs},
       ));
       setState(() {
-        _statsLine = '${m.displayName} - best ${best.toStringAsFixed(1)} / '
+        _statsLine = '${_label(m)} - best ${best.toStringAsFixed(1)} / '
             'median ${med.toStringAsFixed(1)} tok/s';
         _status = 'done';
       });
@@ -231,6 +247,18 @@ class _LlmTabState extends State<LlmTab> {
       if (mounted) setState(() => _running = false);
     }
   }
+
+  // Thinking off: the bench times answers, and a reasoning model
+  // would spend the token budget on its reasoning.
+  Map<String, dynamic> _inputs(String prompt) => {
+        'prompt': prompt,
+        'max_new_tokens': _maxNew,
+        'enable_thinking': false,
+      };
+
+  // The model's name, with " + MTP" when its drafter runs.
+  String _label(_LlmModel m) =>
+      _mtp && _mtpSupported ? '${m.displayName} + MTP' : m.displayName;
 
   // --------------------------------------------------------------------
   // Build
@@ -245,7 +273,13 @@ class _LlmTabState extends State<LlmTab> {
           selected: _selected,
           label: (m) => m.displayName,
           enabled: !_running,
-          onSelected: (m) => setState(() => _selected = m),
+          onSelected: (m) => setState(() {
+            _selected = m;
+            // Known again once the new model has loaded.
+            if (_loadedKey?.startsWith('${m.repo}|') != true) {
+              _mtpSupported = false;
+            }
+          }),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -283,6 +317,14 @@ class _LlmTabState extends State<LlmTab> {
             ),
           ),
         ]),
+        if (_mtpSupported)
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('MTP (speculative decoding)'),
+            subtitle: const Text('Applies at the next load.'),
+            value: _mtp,
+            onChanged: _running ? null : (v) => setState(() => _mtp = v),
+          ),
         if (_loadPhase != null)
           LoadProgress(phase: _loadPhase!, fraction: _loadFraction),
         const SizedBox(height: 12),

@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 
 // ============================================================================
 // BACKEND layer — the config source
@@ -11,68 +10,44 @@ import 'package:thestage_android_sdk/thestage_android_sdk.dart';
 // the `llm_*` keys in [toConfig]; "how is ASR connected?" → the `stt` / `vad`
 // / `turn_*` / `asr_*` keys.
 //
+// Models are Hugging Face repo ids. The app passes no `*_revision` and no
+// `*_device` key, so the SDK takes each repo's pinned revision and the best
+// bundle this phone supports.
+//
 // It's a [ChangeNotifier] so the Settings screen rebuilds live as sliders move.
 // ============================================================================
 class VoiceAgentSettings extends ChangeNotifier {
-  // ── Local BundledModels (android bundle assets) ──────────────────────────
-  // When true, [resolveLocalConfig] rewrites vad/stt/tts/turn + starts the
-  // on-device LLM from prepare trees. When false (default), HF repo ids are
-  // used and HF revisions come from the SDK ModelRevisionMap (do not pass
-  // stt_revision / tts_revision / turn_detector_revision).
-  bool useLocalBundles = false;
-
-  // Bundled folder names under the app bundle (must match sync_local_bundles).
-  String localLlmBundle = 'lfm2.5-350m';
-  String localSttBundle = 'thewhisper-large-v3-turbo';
-  String localTtsBundle = 'neutts-nano-multilingual';
-  String localVadBundle = 'silero-vad';
-  String localTurnBundle = 'smart-turn-v3';
-
-  // Handle registered with TheStageAI.start_model for bundled local LLM.
-  static const localLlmHandle = 'llm';
-  // Default on-device LLM when loading from HuggingFace (handle == repo id).
+  // Default on-device LLM (the `local` provider).
   static const hfLlmRepo = 'TheStageAI/LFM2.5-350M';
   static const hfSttRepo = 'TheStageAI/thewhisper-large-v3-turbo';
   static const hfTtsRepo = 'TheStageAI/neutts-nano-multilingual';
 
-  /// On-device (local) LLM path is NOT available on Android yet. The picker
-  /// shows Local but never routes the agent into the unready on-device path;
-  /// [llmProvider] stays remote. Used to gate the Provider dropdown.
-  static const bool localLlmAvailable = false;
+  /// The model the `openai_compatible` provider starts with.
+  static const cloudDefaultModel = 'gpt-4o-mini';
 
-  /// On-device LLMs shown behind the gated local path (Android fleet).
+  /// Shipping on-device LLMs (see docs/llm.md).
   static const availableHfLlms = [
     'TheStageAI/LFM2.5-350M',
     'TheStageAI/LFM2.5-230M',
-    'TheStageAI/Qwen3-0.6B',
+    'TheStageAI/LFM2.5-1.2B',
+    'TheStageAI/LFM3-1.7B',
+    'TheStageAI/Qwen3.5-0.8B',
+    'TheStageAI/Qwen3.5-2B',
+    'TheStageAI/Qwen3.5-4B',
+    'TheStageAI/Qwen3.5-9B', // 8 Elite and 8 Elite Gen 5 only
   ];
 
-  /// Shipping HF ASR repos (Android fleet — Whisper turbo only).
+  /// Shipping ASR repos (Whisper large-v3 turbo).
   static const availableHfAsr = [
     'TheStageAI/thewhisper-large-v3-turbo',
   ];
 
-  /// Shipping HF TTS repos (Android fleet — NeuTTS families).
+  /// Shipping TTS repos (the NeuTTS families).
   static const availableHfTts = [
     'TheStageAI/neutts-multilingual',
     'TheStageAI/neutts-nano-multilingual',
   ];
 
-  /// BundledModels folder names for local-dev mode (gated local path).
-  static const availableLocalLlms = [
-    'lfm2.5-350m',
-    'lfm2.5-230m',
-    'qwen3-0.6b',
-  ];
-  static const availableLocalAsr = [
-    'thewhisper-large-v3-turbo',
-  ];
-  static const availableLocalTts = [
-    'neutts-multilingual',
-    'neutts-nano-multilingual',
-  ];
-
-  // HF repo ids used when [useLocalBundles] is false.
   String sttRepo = hfSttRepo;
   // NeuTTS engines: an HF repo id, or a local bundle path via
   // --dart-define=NEUTTS_ENGINES_PATH.
@@ -80,54 +55,71 @@ class VoiceAgentSettings extends ChangeNotifier {
     'NEUTTS_ENGINES_PATH',
     defaultValue: hfTtsRepo,
   );
+  // Smart-turn engines (used when [useDnnTurn]): an HF repo id, or a
+  // local bundle via --dart-define=TURN_DETECTOR_ENGINES_PATH.
+  String turnDetectorRepo = const String.fromEnvironment(
+    'TURN_DETECTOR_ENGINES_PATH',
+    defaultValue: 'TheStageAI/smart-turn-v3',
+  );
 
   // ── Voice & language ─────────────────────────────────────────────────────
+  /// Offered before the TTS has loaded. Once it has, [voices] holds the
+  /// loaded bundle's own list (the agent's `voices` event).
+  static const fallbackVoices = ['paul', 'bril', 'dave', 'jo'];
+  static const availableLanguages = ['en', 'auto', 'fr', 'de', 'es'];
+
+  List<String> voices = fallbackVoices;
   String ttsVoice = 'paul';
   String sttLanguage = 'en';
   String systemPrompt =
       'You are a helpful voice assistant. Keep responses concise.';
 
   // ── LLM provider ─────────────────────────────────────────────────────────
-  // Local: llm_model is the start_model handle (bundled: [localLlmHandle];
-  // HF: usually the repo id, e.g. [hfLlmRepo]).
-  // Cloud: openai_compatible + endpoint + api key.
-  //
-  // Android defaults to remote (openai_compatible) — the on-device (local)
-  // LLM path is not wired up yet ([localLlmAvailable] == false), so the
-  // Provider dropdown offers Local but the app stays on remote.
-  String llmProvider = 'openai_compatible';
-  String llmModel = 'gpt-4o-mini';
+  // local: llm_model is the on-device LLM's HF repo id (see [hfLlmRepo]); the
+  // agent runs it with thinking off.
+  // openai_compatible: llm_model is the cloud model name, sent with
+  // [llmEndpoint] and the OPENAI_API_KEY.
+  String llmProvider = 'local';
+  String llmModel = hfLlmRepo;
   String llmEndpoint = 'https://api.openai.com/v1/chat/completions';
-  // Cloud (OpenAI-compatible) only. Local LFM uses the bundle's
-  // `arch.decoder.generation` — these are not sent when llmProvider=local.
+  // The reply's token cap, for both providers.
   int maxTokens = 256;
+  // Cloud only: the on-device models decode greedily and ignore it.
   double temperature = 0.7;
 
-  /// Voices offered for the selected TTS. Android ships only NeuTTS (both the
-  /// multilingual and nano-multilingual families share the same bundle
-  /// voices), so this is simply the fixed [availableVoices] set — no
-  /// per-TTS-family branching and no persona/clone voices.
-  List<String> get voicesForSelectedTts => availableVoices;
+  /// Switch the LLM provider and give [llmModel] a value that makes
+  /// sense for it: an on-device repo for `local`, a cloud model name for
+  /// `openai_compatible`.
+  void selectProvider(String provider) {
+    llmProvider = provider;
+    final onDevice = availableHfLlms.contains(llmModel);
+    if (provider == 'local' && !onDevice) {
+      llmModel = hfLlmRepo;
+    } else if (provider != 'local' && onDevice) {
+      llmModel = cloudDefaultModel;
+    }
+  }
 
   void selectTtsRepo(String repo) {
+    if (repo == ttsRepo) return;
     ttsRepo = repo;
-    final voices = voicesForSelectedTts;
-    if (!voices.contains(ttsVoice)) {
-      ttsVoice = voices.first;
-    }
+    // A different bundle has its own voices; they arrive on next Start.
+    voices = fallbackVoices;
+    if (!voices.contains(ttsVoice)) ttsVoice = voices.first;
   }
 
-  void selectLocalTtsBundle(String bundle) {
-    localTtsBundle = bundle;
-    final voices = voicesForSelectedTts;
-    if (!voices.contains(ttsVoice)) {
+  /// Take the loaded TTS bundle's voices (the agent's `voices` event)
+  /// and the voice it actually uses.
+  void applyBundleVoices(List<String> bundleVoices, {String? current}) {
+    if (bundleVoices.isEmpty) return;
+    voices = List.unmodifiable(bundleVoices);
+    if (current != null && voices.contains(current)) {
+      ttsVoice = current;
+    } else if (!voices.contains(ttsVoice)) {
       ttsVoice = voices.first;
     }
+    notifyListeners();
   }
-
-  // Sliding chat window: last N user+assistant turns. System prompt is
-  // prepended every LLM call from [systemPrompt] (never trimmed with history).
-  int chatMemoryMaxTurns = 10;
 
   // ── Endpointing (VAD) ────────────────────────────────────────────────────
   int silenceTimeoutMs = 600;
@@ -136,9 +128,8 @@ class VoiceAgentSettings extends ChangeNotifier {
   int maxAccumulationMs = 30000;
 
   // ── Turn detection (end-of-turn). DNN = pipecat smart-turn. ──────────────
-  // On by default, matching iOS's demo app, now that the smart-turn
-  // bundle ships at TheStageAI/smart-turn-v3 @ main. Force VAD-silence
-  // endpointing with --dart-define=USE_DNN_TURN=false.
+  // On by default. Force VAD-silence endpointing with
+  // --dart-define=USE_DNN_TURN=false.
   bool useDnnTurn =
       const bool.fromEnvironment('USE_DNN_TURN', defaultValue: true);
   double turnEotThreshold = 0.85;
@@ -160,14 +151,17 @@ class VoiceAgentSettings extends ChangeNotifier {
   int asrPartialIntervalMs = 600;
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
-  // Emit a single monotonic cross-node event timeline on the `Timeline`
-  // os_log category. Stream on a connected Mac with:
-  //   log stream --info --predicate
-  //     'subsystem == "TheStageAI" AND category == "Timeline"'
+  // Log a single monotonic cross-node event timeline under the `Timeline`
+  // logcat tag. Read it with:
+  //   adb logcat -s Timeline:I
   bool debugTimeline = false;
 
   // ── Wake word ────────────────────────────────────────────────────────────
-  bool wakeWordEnabled = false;
+  // The SDK supports a wake word (the `wake_word` key below), but a
+  // wake-word model recognises one specific phrase, so this example ships
+  // without one: the agent always listens continuously. The threshold and
+  // timeout stay here to show the config surface a wake word would use.
+  final bool wakeWordEnabled = false;
   double wwThreshold = 0.5;
   int conversationTimeoutSec = 30;
 
@@ -185,9 +179,10 @@ class VoiceAgentSettings extends ChangeNotifier {
   double interruptThreshold = 0.9;
 
   // Barge-in lockouts / AEC convergence. The initial lockout is a one-time,
-  // longer window on the FIRST reply that covers VPIO cold-start; it's set
-  // generously here because on a warm restart (models cached) the first reply
-  // arrives before AEC has fully converged, which otherwise self-interrupts.
+  // longer window on the FIRST reply that covers the echo canceller's cold
+  // start; it's set generously here because on a warm restart (models
+  // cached) the first reply arrives before AEC has fully converged, which
+  // otherwise self-interrupts.
   int interruptMinPlaybackMs = 250;
   int interruptInitialLockoutMs = 1500;
   int interruptThinkingLockoutMs = 600;
@@ -195,18 +190,15 @@ class VoiceAgentSettings extends ChangeNotifier {
   // ── Audio ────────────────────────────────────────────────────────────────
   int preRollMs = 200;
   bool aecEnabled = true;
-  // Silence pumped to the speaker at start so VPIO has echo reference samples
-  // before the first real TTS. Bumped above the SDK default for restart margin.
+  // Silence played at start so the echo canceller has reference samples
+  // before the first real TTS. 400 ms here, above the SDK's 250 ms default,
+  // for margin on a warm restart.
   int aecWarmupMs = 400;
+  // Grace after each TTS turn drains before the mic is trusted again.
   int aecPlaybackGateTailMs = 80;
 
-  // ── Debug toggles ────────────────────────────────────────────────────────
-  bool showMetrics = false;
-  bool showPartialTranscript = true;
+  // ── ASR ──────────────────────────────────────────────────────────────────
   bool speculativeWhisper = true;
-
-  static const availableVoices = ['paul', 'bril', 'dave', 'jo'];
-  static const availableLanguages = ['en', 'auto', 'fr', 'de', 'es'];
 
   /// Flatten the settings into the `config` map `agent.start(config:)` reads.
   /// Grouped by subsystem so the LLM / ASR / TTS / turn-detection wiring is
@@ -216,20 +208,26 @@ class VoiceAgentSettings extends ChangeNotifier {
         'vad': 'TheStageAI/silero-vad',
         'stt': sttRepo,
         'tts': ttsRepo,
-        // Android engines live on the `android` branch (iOS uses `develop`).
-        'stt_revision': 'android',
-        'tts_revision': 'android',
+        // No `*_revision` keys on purpose: an explicit revision overrides
+        // the SDK's pinned one, which is the revision we test and ship.
+        // Pass one only to try a bundle that is not pinned yet.
         'tts_voice': ttsVoice,
-        'wake_word': wakeWordEnabled ? 'TheStageAI/wake-word' : null,
+        // No wake-word bundle ships with this example, so the agent never
+        // rests in `sleeping`. Set this to a bundle to enable a wake word.
+        'wake_word': null,
 
         // ── LLM wiring (what produces the assistant's words) ──
         'llm_provider': llmProvider,
         'llm_model': llmModel,
-        'llm_endpoint': llmEndpoint,
-        'llm_api_key': apiKey,
+        // Local: the on-device LLM's engines (HF repo id).
+        if (llmProvider == 'local') 'llm': llmModel,
+        if (llmProvider != 'local') ...{
+          'llm_endpoint': llmEndpoint,
+          'llm_api_key': apiKey,
+          'temperature': temperature,
+        },
         'system_prompt': systemPrompt,
         'max_tokens': maxTokens,
-        'temperature': temperature,
 
         // ── VAD / endpointing ──
         'vad_threshold': vadThreshold,
@@ -262,10 +260,8 @@ class VoiceAgentSettings extends ChangeNotifier {
         'stt_language': sttLanguage,
 
         // ── Turn detection ──
-        // Android runs smart-turn on CPU (iOS: 'npu'); the turn_detector
-        // engines path is injected at start() in voice_chat_screen.dart.
         'turn_detection_mode': useDnnTurn ? 'dnn' : 'vad',
-        'turn_detector_device': 'cpu',
+        'turn_detector': turnDetectorRepo,
         'turn_eot_threshold': turnEotThreshold,
         'turn_eot_confirm_count': turnEotConfirmCount,
         'turn_eot_high_confidence': turnEotHighConfidence,
@@ -283,78 +279,6 @@ class VoiceAgentSettings extends ChangeNotifier {
         // ── Diagnostics ──
         'debug_timeline': debugTimeline,
       };
-
-  /// Resolve `BundledModels/<name>` paths and patch [config] so the agent loads
-  /// VAD/STT/TTS/turn from the app bundle.
-  ///
-  /// INERT on Android: the on-device (local) LLM path is not available yet, so
-  /// [useLocalBundles] stays false and this is a no-op. Kept for parity with
-  /// the Apple app; do NOT rely on it to drive a working local run.
-  Future<Map<String, dynamic>> resolveLocalConfig(
-    Map<String, dynamic> config,
-  ) async {
-    if (!useLocalBundles) return config;
-
-    Future<String> pathFor(String name) async {
-      final p = await TheStageFlutterSDK.get_bundled_engine_path(name);
-      if (p == null || p.isEmpty) {
-        throw StateError('Bundled model missing: $name');
-      }
-      return p;
-    }
-
-    final sttPath = await pathFor(localSttBundle);
-    final ttsPath = await pathFor(localTtsBundle);
-    final vadPath = await pathFor(localVadBundle);
-    final turnPath = await pathFor(localTurnBundle);
-
-    config['vad'] = vadPath;
-    config['stt'] = sttPath;
-    config['tts'] = ttsPath;
-    config['turn_detector'] = turnPath;
-    config['llm_provider'] = 'local';
-    config['llm_model'] = localLlmHandle;
-    return config;
-  }
-
-  /// Start the on-device LLM after VAD/STT/TTS are loaded.
-  ///
-  /// INERT on Android: guarded on `llmProvider == 'local'`, which never holds
-  /// because the Local provider is gated off ([localLlmAvailable] == false).
-  Future<void> startLocalLlm() async {
-    if (llmProvider != 'local') return;
-    final String handle;
-    final String enginesPath;
-    if (useLocalBundles) {
-      final p =
-          await TheStageFlutterSDK.get_bundled_engine_path(localLlmBundle);
-      if (p == null || p.isEmpty) {
-        throw StateError('Bundled model missing: $localLlmBundle');
-      }
-      handle = localLlmHandle;
-      enginesPath = p;
-    } else {
-      handle = llmModel;
-      enginesPath = llmModel;
-    }
-    try {
-      await TheStageFlutterSDK.stop_model(model_name: handle);
-    } catch (_) {}
-    await TheStageFlutterSDK.start_model(
-      model_name: handle,
-      engines_path: enginesPath,
-      model_type: 'thestage_llm',
-      device: 'npu',
-    );
-  }
-
-  Future<void> stopLocalLlm() async {
-    if (llmProvider != 'local') return;
-    final handle = useLocalBundles ? localLlmHandle : llmModel;
-    try {
-      await TheStageFlutterSDK.stop_model(model_name: handle);
-    } catch (_) {}
-  }
 
   /// Mutate settings inside [fn] and notify listeners (the Settings screen).
   void update(void Function(VoiceAgentSettings s) fn) {

@@ -13,22 +13,24 @@ enum VlmLifecycle {
 
 /// App-local example node: submit an image → caption stream + port.
 ///
-/// Android specifics vs. the Apple recipe:
-///   * `model_type` is `'lfm2-vl'` (Apple uses `'thestage_vl'`).
-///   * inference takes a file **path** (`{'prompt': ..., 'image': path}`);
-///     there is no image_bytes / image_base64 path on Android.
+/// Inference takes the image as a file **path**
+/// (`{'prompt': ..., 'image': path}`). [modelType] is the VLM family
+/// (`'lfm2-vl'` or `'gemma4-vl'`).
 ///
 /// The node only drains in quiet agent states (`runWhen`) so a VLM burst
 /// never competes with the LLM / TTS during an active turn.
-class VLMCaptionNode extends TheStageAgentNode {
+class VLMCaptionNode extends TSAgentNode {
   VLMCaptionNode({
     this.id = 'vlm',
     // Quiet states only — never drain during thinking / speaking.
     this.runWhen = const ['idle', 'sleeping', 'listening'],
     required this.enginesPath,
+    this.modelType = 'lfm2-vl',
     this.prompt = 'Describe briefly for the voice assistant.',
-    this.device = 'npu',
-    this.revision = 'android',
+    // Empty takes the best bundle for this phone.
+    this.device = '',
+    // Empty resolves the repo's SDK-pinned commit.
+    this.revision = '',
     this.lifecycle = VlmLifecycle.external,
   });
 
@@ -39,6 +41,7 @@ class VLMCaptionNode extends TheStageAgentNode {
   final List<String> runWhen;
 
   final String enginesPath;
+  final String modelType;
   final String prompt;
   final String device;
   final String revision;
@@ -52,7 +55,7 @@ class VLMCaptionNode extends TheStageAgentNode {
   Stream<String> get captions => _captions.stream;
 
   /// Mark the model ready when [lifecycle] is [VlmLifecycle.external]
-  /// (the host [ModelRoster] started / stopped the `lfm2-vl` handle).
+  /// (the host [ModelRoster] started / stopped the VLM handle).
   void markReady({required bool ready}) {
     _modelReady = ready;
   }
@@ -64,7 +67,7 @@ class VLMCaptionNode extends TheStageAgentNode {
       await TheStageFlutterSDK.start_model(
         model_name: id,
         engines_path: enginesPath,
-        model_type: 'lfm2-vl',
+        model_type: modelType,
         device: device,
         revision: revision,
       );
@@ -101,6 +104,7 @@ class VLMCaptionNode extends TheStageAgentNode {
     final batch = List<String>.from(_pending);
     _pending.clear();
     for (final path in batch) {
+      if (_captions.isClosed) return;
       final results = await TheStageFlutterSDK.infer(
         model_name: id,
         input_json: {
@@ -113,7 +117,8 @@ class VLMCaptionNode extends TheStageAgentNode {
           : (results.first['text']?.toString() ??
               results.first['caption']?.toString() ??
               '');
-      if (caption.isNotEmpty) {
+      // The node may have been disposed while the inference ran.
+      if (caption.isNotEmpty && !_captions.isClosed) {
         _captions.add(caption);
         // Local port name → bus `vlm.caption`.
         ctx.sendPort('caption', caption);

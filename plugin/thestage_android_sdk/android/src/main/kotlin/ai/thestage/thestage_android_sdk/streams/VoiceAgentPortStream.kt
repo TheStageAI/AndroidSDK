@@ -72,6 +72,7 @@ class VoiceAgentPortStream(
         __connect(agent.llm_deltas, "llm.delta")
         __connect(agent.transcripts, "transcripts.final")
         __connect(agent.vad_probabilities, "vad.probability")
+        __connect(agent.tts_levels, "tts.level")
     }
 
     private fun __connect(flow: Flow<Any>, name: String) {
