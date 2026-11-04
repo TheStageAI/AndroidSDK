@@ -14,7 +14,9 @@ Pin this tag; the examples and the Flutter dependency use
 - **Tool calling** for the on-device LLMs (LFM2.5, LFM3, Qwen3.5):
   `infer_stream(..., tools)` runs your tools and continues the reply;
   built-in tools (weather, time, web search, Wikipedia, calculator,
-  phone actions); the voice agent calls them mid-reply (`llm_tools`)
+  phone actions); the voice agent calls them mid-reply (`llm_tools`).
+  `web_search` paces and caches its requests, and
+  `DefaultTools.web_search_provider` plugs in your own search backend
   — see [docs/llm.md](./docs/llm.md). The VLMs take no tools.
 - **VLM**: LFM2.5-VL-450M, LFM2.5-VL-1.6B and Gemma 4 E2B (with MTP
   and thinking), images + prompt → text —
@@ -22,7 +24,9 @@ Pin this tag; the examples and the Flutter dependency use
 - **TTS**: `neutts-nano-multilingual` (9 languages, smaller and faster)
   and the English-only `neutts`; your own voice packs (`voice_dir`);
   a startup chunk ramp (`chunk_frames_schedule`, default 8-12-20) for
-  a faster first audio — see [docs/tts.md](./docs/tts.md).
+  a faster first audio; text with nothing to say (only punctuation or
+  symbols) returns empty audio instead of invented speech — see
+  [docs/tts.md](./docs/tts.md).
 - **Speaker diarization** — see [docs/diarization.md](./docs/diarization.md).
 - **Voice agent**: speaker verification (`speaker_id`,
   `enroll_speaker`), speaker-verified wake-word starts
@@ -36,7 +40,7 @@ Pin this tag; the examples and the Flutter dependency use
 
 | file | sha256 |
 |---|---|
-| `TheStageCore.aar` | `6bed8efc0e68ca4494c9006b94d54058dbc5245e58b3eb6d86b6fd961ab76840` |
+| `TheStageCore.aar` | `235aee705a938cee073019b91b24612589a523e8143479d6f25d832a7a00746c` |
 | `onnxruntime-android.aar` | `d5fb3d4277e7717f7f2b8ecd5b4090946e3355dbde88d1e5a059a6c15fdb1d69` |
 
 ## Models

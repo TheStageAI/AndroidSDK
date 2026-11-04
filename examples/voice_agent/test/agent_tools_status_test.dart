@@ -86,10 +86,10 @@ void main() {
     c.dispose();
   });
 
-  test('settings send llm_tools, default web, with the tool pattern', () {
+  test('settings send llm_tools, default voice, with the tool pattern', () {
     final s = VoiceAgentSettings();
     final config = s.toConfig('key');
-    expect(config['llm_tools'], 'web');
+    expect(config['llm_tools'], 'voice');
     expect(
       config['system_prompt'] as String,
       contains('Tool pattern (always):'),
