@@ -74,8 +74,12 @@ and what was free.
 To catch it: Kotlin `EngineArchiveError.InsufficientStorage`
 (`ai.thestage.qlip.delivery`; carries `need_bytes` / `free_bytes`);
 Flutter a `PlatformException` with code `'INSUFFICIENT_STORAGE'`.
-Removing a loaded model throws `ModelManagerError.ModelInUse` in
-Kotlin; in Flutter it is a `PlatformException` with no dedicated code.
+Removing a model that holds its files throws
+`ModelManagerError.ModelInUse` in Kotlin and `ModelInUseException`
+(code `'MODEL_IN_USE'`) in Flutter; a start or download during a
+removal throws `ModelManagerError.StorageBusy` /
+`StorageBusyException` (code `'STORAGE_BUSY'`). Both Flutter types are
+`PlatformException`s.
 See [model_management.md](./model_management.md#handling-storage-and-in-use-errors).
 
 ## Session log file

@@ -154,8 +154,8 @@ internal fun __fail(
     error: Exception,
 ) {
     // A bundle-backed model whose files are missing,
-    // incomplete or malformed (cache-wipe / partial
-    // download / lost-DEK sealed engines). Surface a
+    // incomplete or unreadable (cache-wipe / partial
+    // download). Surface a
     // distinct code so apps can show a friendly "reconnect
     // and reload" UI instead of a raw fault. The
     // user-facing message rides on the exception; the
@@ -169,6 +169,32 @@ internal fun __fail(
             "MODEL_UNAVAILABLE",
             error.message ?: "Model unavailable",
             null,
+        )
+        return
+    }
+    // A removal asked for while a model holds the slot -- loaded,
+    // or still starting or downloading (`loading`). The one
+    // removal failure the app can fix on its own, so it gets its
+    // own code rather than a message to match.
+    if (error is ModelManagerError.ModelInUse) {
+        result.error(
+            "MODEL_IN_USE",
+            error.message ?: "Model is in use",
+            mapOf(
+                "model_type" to error.model_type,
+                "model_name" to error.model_name,
+                "loading" to error.loading,
+            ),
+        )
+        return
+    }
+    // A start or download asked for while models are being
+    // removed. Retryable once that removal returns.
+    if (error is ModelManagerError.StorageBusy) {
+        result.error(
+            "STORAGE_BUSY",
+            error.message ?: "Models are being removed",
+            mapOf("model_type" to error.model_type),
         )
         return
     }

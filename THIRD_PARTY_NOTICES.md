@@ -68,11 +68,6 @@ engines) are covered by the top-level [LICENSE](./LICENSE).
 - **Use:** I/O buffering underneath OkHttp; pulled in transitively.
 - **Project:** https://github.com/square/okio
 
-### AndroidX Core (`androidx.core:core-ktx`)
-- **License:** Apache-2.0
-- **Use:** Android platform Kotlin extensions used by the core module.
-- **Project:** https://developer.android.com/jetpack/androidx
-
 ---
 
 ## Proprietary runtime (not redistributed by this SDK)
