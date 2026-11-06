@@ -12,7 +12,7 @@ path.
 
 | | |
 |---|---|
-| **Version** | **`1.1.0`** — pin this tag (`ref: v1.1.0`); do not float |
+| **Version** | **`1.1.1`** — pin this tag (`ref: v1.1.1`); do not float |
 | **Platform** | Android, `minSdk 28`, `compileSdk 35`, **arm64-v8a** only |
 | **Backend** | Hexagon NPU (TheStage NPU runtime and QNN / HTP); a portable CPU build where a model publishes one |
 | **Token** | one online check per process (cached in-memory); a fresh launch re-validates online |
@@ -56,13 +56,13 @@ path.
 - `docs/` — per-pipeline reference guides.
 - `scripts/setup.sh` — one-time host setup (AAR symlinks + secrets
   bootstrap for the Flutter examples).
-- `VERSION` — the SDK line this checkout ships (`1.1.0`).
+- `VERSION` — the SDK line this checkout ships (`1.1.1`).
 
 ---
 
 ## Capabilities & model fleet
 
-Everything below is the **`1.1.0`** fleet. Pass the HF id as
+Everything below is the **`1.1.1`** fleet. Pass the HF id as
 `engines_path`; the SDK downloads and caches it on first start and
 resolves the `model_type` from the repo id, so you pass `model_type`
 only for a local bundle. `model_name` is your own handle for the
@@ -148,7 +148,7 @@ dependencies:
     git:
       url: https://github.com/TheStageAI/AndroidSDK.git
       path: plugin/thestage_android_sdk
-      ref: v1.1.0
+      ref: v1.1.1
 ```
 
 The plugin declares the prebuilt AARs `compileOnly`, so your **app
@@ -553,7 +553,7 @@ Both surfaces use the same `model_name` strings and the same
 | Load fails naming the chip and what the repo publishes | `device` asks for a build the model does not publish for this phone | Leave `device` unset for the best available build |
 | Phone runs low on storage | Models stay in app storage until removed | `remove_model` for one model, `maintain()` for what nothing uses |
 | Flutter audio glitches / NaNs | `Float64List` or wrong rate | Use `Float32List`; match the audio table above |
-| Flutter git dependency won't resolve | Floating ref | Pin `ref: v1.1.0` |
+| Flutter git dependency won't resolve | Floating ref | Pin `ref: v1.1.1` |
 
 ---
 

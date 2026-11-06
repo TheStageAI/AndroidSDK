@@ -292,9 +292,9 @@ uninstalled.
 
 | Call | Frees |
 |---|---|
-| `remove_model(model_type:, repository:)` | One installed model. Throws while it is loaded; stop it first. It downloads again on its next load. |
+| `remove_model(model_type:, repository:)` | One installed model. Throws while a model of that type is loaded (stop it first) or still starting or downloading (wait for it). It downloads again on its next load. |
 | `maintain()` | Everything nothing claims: revisions an update replaced, models your app no longer loads, and downloads abandoned more than a day ago. Safe to call at any time; loaded models are never touched. Returns a `SweepResult`: `freed_bytes` and the `removed_paths` count. |
-| `reset_models()` | Every staged model and the download cache, to start over. Throws while any model is loaded. A `prefetch_model` in flight is aborted, not waited for. |
+| `reset_models()` | Every staged model and the download cache, to start over. Throws while any model is loaded, starting or downloading. |
 
 The SDK already reclaims the replaced revision right after each
 update, so an app that never calls `maintain()` does not keep one copy
@@ -327,8 +327,12 @@ is the one load failure they can act on.
 ## Handling storage and in-use errors
 
 Low storage fails `start_model` and `prefetch_model`. Removing a
-loaded model (`remove_model`, `reset_models`) fails with model-in-use;
-stop the model and retry.
+model that holds its files (`remove_model`, `reset_models`) fails with
+model-in-use: a loaded model, which you stop and retry, or one still
+starting or downloading (`loading`), which you wait for. While a
+removal runs, a `start_model` or `prefetch_model` of that type (any
+type, for `reset_models`) fails with storage-busy; retry once the
+removal returns.
 
 **Kotlin:**
 
@@ -345,7 +349,8 @@ try {
 try {
     TheStageAI.remove_model(model_type = "the-stage-llm")
 } catch (e: ModelManagerError.ModelInUse) {
-    // e.model_name is loaded: stop_model it first.
+    // e.loading: e.model_name is still starting; wait for it.
+    // Otherwise it is loaded: stop_model it first.
 }
 ```
 
@@ -364,9 +369,9 @@ try {
 
 try {
   await TheStageFlutterSDK.remove_model(model_type: 'the-stage-llm');
-} on PlatformException catch (e) {
-  // Model in use has no dedicated code: e.message names the
-  // loaded model. stop_model it first.
+} on ModelInUseException catch (e) {
+  // e.loading: e.modelName is still starting; wait for it.
+  // Otherwise it is loaded: stop_model it first.
 }
 ```
 

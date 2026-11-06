@@ -1,46 +1,44 @@
-# TheStage Android SDK 1.1.0
+# TheStage Android SDK 1.1.1
 
 Pin this tag; the examples and the Flutter dependency use
-`ref: v1.1.0`.
+`ref: v1.1.1`.
 
-## What's new since 1.0.1
+## What's new since 1.1.0
 
-- **On-device chat LLMs** on TheStage's own Snapdragon NPU runtime:
-  LFM2.5 (230M, 350M, 1.2B), LFM3-1.7B and Qwen3.5 (0.8B, 2B, 4B, and
-  9B on 8 Elite and 8 Elite Gen 5 only),
-  with streaming, multi-turn history that reuses the KV cache, MTP and
-  thinking — see [docs/llm.md](./docs/llm.md). Qwen3-0.6B, listed as
-  coming soon in 1.0.1, does not ship; use Qwen3.5-0.8B.
-- **Tool calling** for the on-device LLMs (LFM2.5, LFM3, Qwen3.5):
-  `infer_stream(..., tools)` runs your tools and continues the reply;
-  built-in tools (weather, time, web search, Wikipedia, calculator,
-  phone actions); the voice agent calls them mid-reply (`llm_tools`).
-  `web_search` paces and caches its requests, and
-  `DefaultTools.web_search_provider` plugs in your own search backend
-  — see [docs/llm.md](./docs/llm.md). The VLMs take no tools.
-- **VLM**: LFM2.5-VL-450M, LFM2.5-VL-1.6B and Gemma 4 E2B (with MTP
-  and thinking), images + prompt → text —
-  see [docs/vlm.md](./docs/vlm.md).
-- **TTS**: `neutts-nano-multilingual` (9 languages, smaller and faster)
-  and the English-only `neutts`; your own voice packs (`voice_dir`);
-  a startup chunk ramp (`chunk_frames_schedule`, default 8-12-20) for
-  a faster first audio; text with nothing to say (only punctuation or
-  symbols) returns empty audio instead of invented speech — see
-  [docs/tts.md](./docs/tts.md).
-- **Speaker diarization** — see [docs/diarization.md](./docs/diarization.md).
-- **Voice agent**: speaker verification (`speaker_id`,
-  `enroll_speaker`), speaker-verified wake-word starts
-  (`turn_start_mode`), voice packs (`tts_voice_dir`) and the new
-  on-device LLMs (`llm_provider = "local"`).
-- **Examples**: `tutor_tts` (start here) and `tutor_small_llms` are
-  new. `tts_front_stream` is removed; `tutor_tts` covers streaming TTS.
-- The voice-agent examples need Flutter 3.38 (Dart 3.10.7+).
+- **Faster LFM3-1.7B prompts on every supported chip.** The SDK now
+  pins a newer build of the same checkpoint: prompt processing is
+  about 2.4x faster on Snapdragon 8 Elite and about 1.5x faster on
+  8 Gen 3, with the same answers. Apps that pass an empty `revision`
+  get it automatically; an app that already has LFM3 installed keeps
+  serving it until it calls
+  `prefetch_model(..., replace_existing = true)`.
+- **Model removal waits for loads.** `remove_model` and
+  `reset_models` now also refuse while a model is still starting or
+  downloading (`ModelManagerError.ModelInUse` with `loading = true`).
+  While a removal runs,
+  `start_model` and `prefetch_model` for the affected model fail with
+  the new `ModelManagerError.StorageBusy`; retry once the removal
+  returns. In Flutter these are `ModelInUseException` (`MODEL_IN_USE`)
+  and `StorageBusyException` (`STORAGE_BUSY`), both
+  `PlatformException`s, so existing `on PlatformException` handlers
+  still catch them. See [docs/model_management.md](./docs/model_management.md).
+- **No AndroidX dependency.** The SDK no longer needs `androidx.core`
+  at runtime; a native Kotlin app needs only the dependencies listed
+  in the README.
+
+### Behaviour changes
+
+- `reset_models()` refuses while a download is in flight, instead of
+  aborting it. Stop or let the download finish first.
+- `ModelManagerError` has a new subclass, `StorageBusy`. Kotlin code
+  with an exhaustive `when` over it and no `else` branch needs a new
+  branch.
 
 ## Binary
 
 | file | sha256 |
 |---|---|
-| `TheStageCore.aar` | `235aee705a938cee073019b91b24612589a523e8143479d6f25d832a7a00746c` |
+| `TheStageCore.aar` | `a215ac81a7dfa53966bb03aef3d0deea15e277aa376389f58fd0e72308b5128b` |
 | `onnxruntime-android.aar` | `d5fb3d4277e7717f7f2b8ecd5b4090946e3355dbde88d1e5a059a6c15fdb1d69` |
 
 ## Models
@@ -70,7 +68,7 @@ commit.
 | `the-stage-llm` | `TheStageAI/Qwen3.5-2B` | `1b4ad9d7cd09ce19664f95bf5bdac4e597454ed1` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
 | `the-stage-llm` | `TheStageAI/LFM2.5-1.2B` | `9f0a758c82274f0fc0626fdbbd37d42c1bc00ca2` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
 | `gemma4-vl` | `TheStageAI/gemma-4-E2B-it` | `0895e6e0421bc93a9148694c9dadb6f72db6b177` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
-| `the-stage-llm` | `TheStageAI/LFM3-1.7B` | `a5e87f3bb8a8e936364e3b70ad38a5bea1dedee2` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
+| `the-stage-llm` | `TheStageAI/LFM3-1.7B` | `a5c349bf2d1d27fb3ab5f049112e7361de3eadcb` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
 | `the-stage-llm` | `TheStageAI/Qwen3.5-4B` | `89edfd01afe727e1c0dfd9758c4aedce13f1df20` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |
 | `the-stage-llm` | `TheStageAI/Qwen3.5-9B` | `6356780bce2a0f83e446d1d352c443495db71e59` | 8 Elite, 8 Elite Gen 5 |
 | `lfm2-vl` | `TheStageAI/LFM2.5-VL-1.6B` | `459eb2c7539d382934aed42ad0c00dcc629c47bf` | 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5 |

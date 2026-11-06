@@ -160,10 +160,9 @@ class SentenceTooLongException implements Exception {
 /// model can't be loaded because its on-disk files are missing,
 /// incomplete or malformed — e.g. an OS cache-wipe removed the
 /// extracted engines, a partial download left the bundle without its
-/// `llm/` dir / `encoder_spec.json` / `metadata.json`, or a
-/// Keystore/DEK reset left the sealed ctx-bins unrecoverable. Apps
-/// surface this with a "reconnect and reload" UI; reloading re-fetches
-/// the bundle.
+/// `llm/` dir / `encoder_spec.json` / `metadata.json`, or the
+/// installed files can no longer be read. Apps surface this with a
+/// "reconnect and reload" UI; reloading re-fetches the bundle.
 class ModelUnavailableException implements Exception {
   ModelUnavailableException({required this.message});
   final String message;
@@ -172,10 +171,60 @@ class ModelUnavailableException implements Exception {
   String toString() => 'ModelUnavailableException: $message';
 }
 
+/// Thrown by [TheStageFlutterSDK.remove_model] while a model of that
+/// type holds its slot, and by [TheStageFlutterSDK.reset_models]
+/// while any model does. Deleting a slot the native runtime holds
+/// mapped would crash rather than fail. When [loading] is false, call
+/// [TheStageFlutterSDK.stop_model] with [modelName] and retry; when
+/// it is true the model is still starting or downloading, so wait
+/// for that call to return.
+///
+/// A [PlatformException] with code `MODEL_IN_USE`, so a handler
+/// written as `on PlatformException` still catches it.
+class ModelInUseException extends PlatformException {
+  ModelInUseException({
+    required String message,
+    this.modelType,
+    this.modelName,
+    this.loading = false,
+  }) : super(code: 'MODEL_IN_USE', message: message);
+
+  /// The model type holding the slot.
+  final String? modelType;
+
+  /// The name it is loaded (or loading) as.
+  final String? modelName;
+
+  /// True while that model is still starting or downloading.
+  final bool loading;
+
+  @override
+  String toString() => 'ModelInUseException: $message';
+}
+
+/// Thrown by [TheStageFlutterSDK.start_model] and
+/// [TheStageFlutterSDK.prefetch_model] while
+/// [TheStageFlutterSDK.remove_model] or
+/// [TheStageFlutterSDK.reset_models] is deleting that model type.
+/// Retry once the removal returns.
+///
+/// A [PlatformException] with code `STORAGE_BUSY`.
+class StorageBusyException extends PlatformException {
+  StorageBusyException({required String message, this.modelType})
+      : super(code: 'STORAGE_BUSY', message: message);
+
+  /// The model type that was refused.
+  final String? modelType;
+
+  @override
+  String toString() => 'StorageBusyException: $message';
+}
+
 /// Rethrows known PlatformExceptions as typed Dart exceptions; passes
 /// everything else through. The plugin forwards the SDK's symbolic
 /// error code (`INPUT_TOO_LONG` / `SENTENCE_TOO_LONG` /
-/// `MODEL_UNAVAILABLE`) as `PlatformException.code`.
+/// `MODEL_UNAVAILABLE` / `MODEL_IN_USE` / `STORAGE_BUSY`) as
+/// `PlatformException.code`.
 Never _rethrowTyped(PlatformException e) {
   if (e.code == 'INPUT_TOO_LONG') {
     throw InputTooLongException(message: e.message ?? 'Input too long');
@@ -188,6 +237,22 @@ Never _rethrowTyped(PlatformException e) {
   if (e.code == 'MODEL_UNAVAILABLE') {
     throw ModelUnavailableException(
       message: e.message ?? 'Model unavailable',
+    );
+  }
+  final d = e.details;
+  final extra = d is Map ? d : const <Object?, Object?>{};
+  if (e.code == 'MODEL_IN_USE') {
+    throw ModelInUseException(
+      message: e.message ?? 'Model is in use',
+      modelType: extra['model_type'] as String?,
+      modelName: extra['model_name'] as String?,
+      loading: extra['loading'] == true,
+    );
+  }
+  if (e.code == 'STORAGE_BUSY') {
+    throw StorageBusyException(
+      message: e.message ?? 'Models are being removed',
+      modelType: extra['model_type'] as String?,
     );
   }
   throw e;
@@ -931,7 +996,10 @@ class TheStageFlutterSDK {
   ///
   /// For an AI pack Play still holds, this frees the extracted tree
   /// and says so rather than claiming a footprint Play owns.
-  /// Throws if the model is currently loaded — stop it first.
+  /// Throws [ModelInUseException] while a model of that type is
+  /// loaded (stop it first) or still starting or downloading (wait
+  /// for it). While it runs, a [start_model] or [prefetch_model] of
+  /// that type throws [StorageBusyException].
   static Future<int> remove_model({
     required String model_type,
     String? variant,
@@ -1050,9 +1118,10 @@ class TheStageFlutterSDK {
   /// the cost of the downloads. A Play-delivered AI pack's own
   /// archive is released through Play, not deleted.
   ///
-  /// Throws while any model is loaded: call [stop_model] on each
-  /// first. It does **not** wait for a [prefetch_model] in flight —
-  /// that transfer is aborted, and the next load downloads again.
+  /// Throws [ModelInUseException] while any model is loaded (call
+  /// [stop_model] on each first), or still starting or downloading
+  /// (wait for that call to return). While it runs, [start_model]
+  /// and [prefetch_model] throw [StorageBusyException].
   static Future<int> reset_models() async {
     try {
       final res = await _channel.invokeMethod<Object?>(
