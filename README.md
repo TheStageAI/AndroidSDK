@@ -34,8 +34,7 @@ path.
 
 ## What's in this repo
 
-- `RELEASE.md` — what's new, the AAR checksums and the model commits
-  this version pins.
+- `RELEASE.md` — what's new and the AAR checksum.
 - `TheStageCore.aar` — pre-built SDK binary (inference engine, license
   gate, the NPU runtime and its DSP modules). Opaque; you link it, you
   don't build it. It compiles against the stock ONNX Runtime
