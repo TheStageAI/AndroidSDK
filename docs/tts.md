@@ -6,6 +6,8 @@ Two public pipelines:
 - **`NeuTTSMultilingual`** — Qwen3-based, 9 languages.
 - **`NeuTTS`** (nano) — phoneme-based, English only.
 
+Phonon and Pocket TTS have their own page: [phonon.md](./phonon.md).
+
 ## Models
 
 | HF repo | Pipeline | Languages | Voice packs |

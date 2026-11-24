@@ -10,9 +10,8 @@ inside your APK, and read process memory.
 ## Choosing the device
 
 A model can publish two kinds of bundle: an **NPU** bundle compiled
-for the Snapdragon NPU (for some models one bundle serves every
-supported chip, for others there is one per chip), and a **portable**
-bundle that runs on the CPU. `device` on `start_model` and
+for the Snapdragon NPU (one bundle serves every supported chip), and
+a **portable** bundle that runs on the CPU. `device` on `start_model` and
 `prefetch_model` chooses between them:
 
 | `device` | What loads |
@@ -293,6 +292,7 @@ uninstalled.
 | Call | Frees |
 |---|---|
 | `remove_model(model_type:, repository:)` | One installed model. Throws while a model of that type is loaded (stop it first) or still starting or downloading (wait for it). It downloads again on its next load. |
+| `delete_model(engines_path, revision)` (Kotlin) | Every installed copy of one HF repo, on every variant, including a Play AI pack whose signed manifest names that repo. `revision` limits it to one commit. A local folder or archive is never deleted. Returns a `ModelDeletion`: `freed_bytes` and the `revisions` removed; a second call frees 0. Throws while a model of that type is loaded or starting. |
 | `maintain()` | Everything nothing claims: revisions an update replaced, models your app no longer loads, and downloads abandoned more than a day ago. Safe to call at any time; loaded models are never touched. Returns a `SweepResult`: `freed_bytes` and the `removed_paths` count. |
 | `reset_models()` | Every staged model and the download cache, to start over. Throws while any model is loaded, starting or downloading. |
 

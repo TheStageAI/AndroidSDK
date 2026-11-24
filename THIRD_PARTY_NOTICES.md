@@ -7,8 +7,7 @@ is used are given for each. Where a license could not be positively
 confirmed at authoring time it is marked **(verify)** and should be
 checked against the component's own repository before distribution.
 
-The SDK's own binaries (`TheStageCore.aar`, `libStagenie.so`, model
-engines) are covered by the top-level [LICENSE](./LICENSE).
+The SDK's own binaries (`TheStageCore.aar`, model engines) are covered by the top-level [LICENSE](./LICENSE).
 
 ---
 
@@ -16,12 +15,13 @@ engines) are covered by the top-level [LICENSE](./LICENSE).
 
 ### ONNX Runtime
 - **License:** MIT
-- **Use:** `onnxruntime-android.aar` — the QNN-EP-enabled ONNX Runtime
-  the core links against for on-device inference. Built from source
-  with the Qualcomm QNN execution provider. ONNX Runtime bundles its
-  own third-party components (FlatBuffers, protobuf, nsync, etc.),
-  each under its own permissive license — see ONNX Runtime's
-  `ThirdPartyNotices.txt`.
+- **Use:** the stock Microsoft build
+  (`com.microsoft.onnxruntime:onnxruntime-android:1.27.0`, Maven
+  Central) that the core compiles against and the consumer app
+  declares; it runs the CPU models. Not redistributed by this SDK.
+  ONNX Runtime bundles its own third-party components (FlatBuffers,
+  protobuf, nsync, etc.), each under its own permissive license — see
+  ONNX Runtime's `ThirdPartyNotices.txt`.
 - **Project:** https://github.com/microsoft/onnxruntime
 
 ### Hugging Face `tokenizers` (Rust)
@@ -67,28 +67,6 @@ engines) are covered by the top-level [LICENSE](./LICENSE).
 - **License:** Apache-2.0
 - **Use:** I/O buffering underneath OkHttp; pulled in transitively.
 - **Project:** https://github.com/square/okio
-
----
-
-## Proprietary runtime (not redistributed by this SDK)
-
-### Qualcomm QNN / QAIRT runtime
-- **License:** Proprietary — provided by Qualcomm under their own
-  license terms. **Not redistributed by this SDK.**
-- **Use:** the Hexagon NPU (HTP) backend. The signed per-SoC QNN HTP
-  skel/stub libraries are pulled by the consumer app from Qualcomm's
-  public Maven repository (`com.qualcomm.qti:qnn-runtime:2.51.0`). The
-  optional `GenAiTransformer` Genie backend libraries
-  (`libQnnGenAiTransformer.so`,
-  `libQnnGenAiTransformerModel.so`, `libQnnCpu.so`, and on QAIRT
-  releases that still ship it `libQnnGenAiTransformerCpuOpPkg.so`)
-  are **not** on
-  Maven and are **not** shipped here — the consumer must copy them
-  from their own Qualcomm QAIRT 2.51 SDK install (see the top-level
-  `README.md` and `scripts/setup.sh`). Your use of these libraries is
-  governed by Qualcomm's license, not by this SDK's license.
-- **Project:** https://qpm-download.qualcomm.com / Qualcomm AI Engine
-  Direct (QAIRT) SDK
 
 ---
 

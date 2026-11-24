@@ -18,7 +18,10 @@
 ## Flutter surface (TheStageFlutterSDK, snake_case)
 - start_model / stop_model / infer / infer_stream
 - send / finish_stream / stop_stream (push text into a TTS infer_stream by stream_id)
-- stream_append / stream_finish / stream_cancel (push audio into an ASR infer_stream)
+- stream_append / stream_finish / stream_cancel (push audio into a diarization infer_stream)
+- ASREngine(stt:, vad:).infer / ASRStream.open (send_pcm, flush, close, cancel) — ASR
+- TSASREngine (start / stop; turns, transcripts, partial_transcripts,
+  vad_probabilities, events, speaker_events) — live ASR, SDK owns the mic
 - prefetch_model / on_progress (single global load-progress stream)
 - device: unset = best build for the phone; 'npu' / 'cpu' = required
   (fails when unpublished); 'gpu' refused
@@ -30,29 +33,36 @@
 
 ## Kotlin core symbols
 - TheStageAI (object): start_model, stop_model, infer, infer_stream,
-  open_tts_streamer, open_asr_streamer, stream_append, stream_finish,
+  open_tts_streamer, asr_engine, asr_pipeline, stream_append, stream_finish,
   prefetch_model, installed_models, available_updates,
-  remove_model, maintain, reset_models, recent_logs, set_log_listener,
+  remove_model, delete_model, maintain, reset_models, recent_logs, set_log_listener,
   record_log, record_error, last_error / last_error_code
 - TheStageLLM                          // LFM2.5 / LFM3 / Qwen3.5 chat
 - Tool, ToolCall, LlmStreamEvent       // tool calling: infer_stream(..., tools, max_tool_rounds = 4)
 - DefaultTools                         // built-in tools: live, web, phone, voice, all, web_mock; voice_system_prompt
-- WhisperModel                         // ASR
+- ASREngine, ASRStream, ASRResult      // ASR: infer, open_stream, mic mode (start/stop)
+- WhisperModel, WhisperPipeline        // Whisper engine + ASR pipeline
 - TheStageVLM                          // VLM: images + prompt -> text (LFM2.5-VL, Gemma 4)
 - ModelStatus.features                 // "mtp" / "thinking" / "tools": supported, default (start_model)
 - NeuTTSMultilingual, NeuTTS           // TTS: 9-lang multilingual (nano + full), English nano
+- PhononTTSPipeline                    // TTS: Phonon 31M, Pocket TTS 18M (English) and 100M (fr de it es pt nl ja zh ko hi pl tr el ru)
 - SileroVAD                            // stateful VAD
 - TheStageVoiceAgent, TheStageAgentConfig   // full voice agent
-- SpeakerId                            // model_type "speaker-id" (redimnet2)
-- SamplingParams                       // sampling overrides (ignored: greedy models)
+- SpeakerId                            // model_type "speaker-id" (TheStageAI/speaker-id-v2)
+- GLiNERel                             // model_type "glinerel": entities, PII, relations; free-text labels; redact
+- EmbeddingGemma, EmbeddingInput        // model_type "embedding-gemma": text (300m); text, image, audio, video (EmbeddingGemma 2)
+- MobileClip2ImageEncoder              // model_type "mobile-clip-image": image -> 512-d unit vector (NPU, CPU bundle elsewhere)
+- SamplingParams                      // sampling overrides (ignored: greedy models)
 
 ## Pages
 - README.md — index, quick start, audio contract, model cache
-- llm.md — TheStageLLM chat, streaming, messages history, use_mtp, enable_thinking,
+- llm.md — TheStageLLM chat, streaming, messages history, n_ctx (context up to 32768), use_mtp, enable_thinking,
   tool calling (Kotlin Tool.execute loop; Flutter manual loop, built-in tools)
 - whisper.md — WhisperModel ASR
-- vlm.md — TheStageVLM (images + prompt -> text, LFM2.5-VL, Gemma 4)
+- vlm.md — TheStageVLM (images + prompt -> text, LFM2.5-VL, Gemma 4); messages history
+  (images encoded once, earlier turns kept); Gemma 4 chat requests (tools, thinking)
 - tts.md — NeuTTS + NeuTTSMultilingual
+- phonon.md — PhononTTSPipeline (model_type phonon / pocket-tts), voice_dir voices
 - vad.md — SileroVAD
 - streaming.md — TTS / LLM stream contracts, back-pressure
 - voice_agent.md — full agent (VAD→STT→LLM→TTS, smart-turn, barge-in,
@@ -60,7 +70,15 @@
 - model_management.md — device choice, availability, prefetch, installed
   models + updates, reclaiming space, load/unload, memory
 - ai_packs.md — ship models via Google Play AI packs (aipack:// engines source)
-- speaker_embedding.md — speaker-id enroll / cosine verify (CPU)
+- speaker_embedding.md — speaker-id enroll / cosine verify (NPU; CPU elsewhere)
+- glinerel.md — glinerel: text + entity / relation labels -> entities, relations, redacted_text
+  (UTF-16 offsets; entities + 2 x relations <= 32 labels a call)
+- embedding_gemma.md — embedding-gemma: text / image_path / audio_path / video_path
+  (+ max_frames), task, dimension (768/512/256/128) -> embedding, embedding_b64,
+  embedding_space_id, token_count, truncated (EmbeddingGemma 2 cuts text at 2048
+  tokens; 300m averages 2048-token pieces)
+- mobileclip2.md — mobile-clip-image: image (file path) -> 512-d embedding;
+  empty list when the image is unreadable
 - diarization.md — who spoke when (nemotron-diarization) / who said what
   (nemotron-multispeaker composite: segments, enrollment, streaming)
 - licensing.md — (apiToken, deviceId) seat, reinstall, online-validation behavior
@@ -68,7 +86,7 @@
 - logging.md — diagnostics ring, session log file, `logs` EventChannel
 
 ## LLM tool calling
-- Models: LFM2.5 230M/350M/1.2B, LFM3-1.7B, Qwen3.5 0.8B/2B/4B. VLMs: no.
+- Models: LFM2.5 230M/350M/1.2B, LFM3-1.7B, Qwen3.5 0.8B/2B/4B; Gemma 4 E2B (vlm.md: messages / tools on a gemma4-vl handle). LFM2.5-VL: no.
   No tool format in the bundle + tools -> throws "This bundle has no tool_calling spec…"
 - Kotlin: Tool(name, description, parameters JSON Schema, execute = { call -> String });
   the SDK runs execute and continues the same Flow<LlmStreamEvent>:
@@ -88,11 +106,15 @@
 ## Audio rates (PCM float, mono, samples in [-1, 1])
 - VAD / Whisper / speaker embedding input: 16 kHz mono Float
 - VAD frame: 512 samples (32 ms)
-- TTS output (NeuTTS / NeuTTSMultilingual): 24 kHz mono Float
+- TTS output (NeuTTS / NeuTTSMultilingual / PhononTTSPipeline): 24 kHz mono Float
 - Speaker embedding window: 2.0 s (32 000 samples), output 192-d L2-norm
 
 ## Compute
 - LLM, VLM and Whisper encoder/decoder run on the Hexagon NPU (TheStage's
-  own NPU runtime; greedy decoding); the TTS LLM runs via QNN HTP
-- Small stateful models (Silero VAD, smart-turn, speaker-id) run on ORT-CPU
+  own NPU runtime; greedy decoding); NeuTTS and Phonon / Pocket TTS
+  run on TheStage's NPU runtime too
+- EmbeddingGemma (NPU only) and MobileCLIP2 (NPU; CPU bundle on other
+  phones and as fallback) run there as well, and so do speaker-id and
+  the wake word's embedding (each with a CPU bundle for other phones)
+- Small stateful models (Silero VAD, smart-turn) run on ORT-CPU
 - Kotlin audio buffers: FloatArray; Flutter: Float32List (never Float64List)

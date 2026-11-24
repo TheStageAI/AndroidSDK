@@ -1,131 +1,166 @@
 # Licensing & Device Identity
 
-How seats work when your app embeds the SDK: what registers a device,
-what counts as one billable seat, and what an integrator must know
-about device identity on Android. Commercial terms and pricing live in
-[Product Terms](./product_terms.md); for a quote open a **Service
-Request** at [app.thestage.ai/contact](https://app.thestage.ai/contact).
+How seats work when your app embeds the SDK, and what that means for
+your code: one `initialize` call per app launch, online, and inference
+on the device after that. Commercial terms are in
+[Product Terms](./product_terms.md).
 
-## Initialize registers the device
+> **Main features**
+>
+> - **One call**: `initialize(api_token)` registers the device and
+>   unlocks every pipeline.
+> - **Online at launch**: the token is validated online once per app
+>   process; inference itself runs on the device.
+> - **Stable seats**: reinstalling the same app on the same device keeps
+>   the same seat.
 
-`initialize` must be called before any pipeline will load. A
-successful `initialize` validates the API token online and registers
-the device — that online validation is what creates (or re-confirms)
-the seat.
+## Quick start
 
-| Surface | Call |
+**Kotlin**
+
+```kotlin
+import ai.thestage.qlip.TheStageAI
+
+// Once, at app start (e.g. Application.onCreate).
+TheStageAI.registerContext(context)
+
+// Once per process, before any start_model. Suspends while the
+// token is validated online.
+TheStageAI.initialize(api_token = token)
+```
+
+**Flutter**
+
+```dart
+import 'package:thestage_android_sdk/thestage_android_sdk.dart';
+
+// Once per process, before any start_model. The plugin registers
+// the context itself.
+await TheStageFlutterSDK.initialize(api_token: token);
+```
+
+### Important API
+
+| Term | Meaning |
 |---|---|
-| Kotlin | `TheStageAI.registerContext(context)` then `TheStageAI.initialize(api_token = "...")` |
-| Flutter | `await TheStageFlutterSDK.initialize(api_token: '...')` — the plugin registers the context automatically |
+| **Seat** | One `(apiToken, deviceId)` pair. Two tokens on one phone are two seats; one token on two phones is two seats. |
+| **`apiToken`** | Identifies your organisation. Generate it at [app.thestage.ai](https://app.thestage.ai/) → Profile → API tokens. The SDK does not store it. |
+| **`deviceId`** | Identifies the registered device for that token. Survives reinstalls and "clear data" of the same app; a factory reset gives a new one. |
+| **Validation** | `initialize` checks the token online. It holds for the rest of the process; the next app launch checks again. There is no offline grace period. |
 
-The SDK never persists the API token itself.
+## Usage Guides
 
-## Seat = `(apiToken, deviceId)`
+### Keep the token out of the binary
 
-A billable seat is the **pair** `(apiToken, deviceId)`:
+> **Problem**
+>
+> **Building** — any shipping app.
+>
+> **Users want** — nothing; this is for you — the token must not be in
+> git or readable from the APK.
+>
+> **Hard part** — `initialize` needs the token at runtime, so it has
+> to come from somewhere the build controls.
 
-- The `apiToken` identifies the customer/developer. Different
-  developers always use different tokens, so two unrelated apps on the
-  same physical device are billed separately — by token, regardless of
-  device-id scope.
-- The `deviceId` identifies the device. The same app on the same
-  device keeps the same id across launches, reinstalls and "clear
-  data".
+**Solution — what to use**
 
-## How `deviceId` is derived
+- A Gradle property or environment variable → `BuildConfig` field.
+- Flutter: `--dart-define-from-file=secrets.json` →
+  `String.fromEnvironment`.
+- `.gitignore` the secrets file.
+- Or fetch it from your backend on first launch.
 
-| Source | Scope | Survives uninstall / clear data? | Resets on |
-|---|---|---|---|
-| Android `ANDROID_ID` (SSAID) | **Per (app, device)** | Yes | Factory reset |
-| Fallback: random UUID in app-private prefs | **Per (app, install)** | No | Uninstall / clear data |
+**Kotlin**
 
-- The SDK reads `Settings.Secure.ANDROID_ID`. Since Android 8 the OS
-  scopes it to the app's signing key and the device user, and keeps it
-  across uninstall/reinstall and "clear data"; only a factory reset
-  changes it.
-- The raw `ANDROID_ID` never leaves the device: the SDK sends only an
-  HMAC of it plus the app's package name, shaped as a UUID, so the id
-  is scoped per app.
-- When `ANDROID_ID` is unavailable, the SDK falls back to a random
-  UUID in app-private storage. That id is per install: uninstall or
-  "clear data" produces a new one, and the backend reconciles brief
-  uninstall/reinstall cycles by reusing the existing seat within a
-  reactivation window.
-- No backup configuration is needed: the id is recomputed on every
-  install, not restored.
+```kotlin
+// build.gradle.kts: buildConfigField("String", "TS_API_TOKEN", ...)
+TheStageAI.initialize(api_token = BuildConfig.TS_API_TOKEN)
+```
+
+**Flutter**
+
+```dart
+// flutter run --dart-define-from-file=secrets.json
+const token = String.fromEnvironment('TS_API_TOKEN');
+await TheStageFlutterSDK.initialize(api_token: token);
+```
+
+> [!TIP]
+> - Add `secrets.json` to `.gitignore`.
+> - Rotating a token does not change seats already registered.
+
+### Use the models where the network is unreliable
+
+> **Problem**
+>
+> **Building** — a field-service app used where the signal comes and
+> goes.
+>
+> **Users want** — dictation and transcription keep working on site.
+>
+> **Hard part** — the token is validated online at every app launch,
+> and the models download online.
+
+**Solution — what to use**
+
+- `initialize` at launch, while there is a connection; it fails
+  without one, so retry it when the network returns.
+- `prefetch_model` every model the app needs during onboarding.
+- After a successful `initialize`, starting a downloaded model and
+  running inference need no network for the rest of the process. Keep
+  the process alive (a foreground service) rather than relaunching
+  in the field.
+
+**Kotlin**
+
+```kotlin
+// Onboarding, online:
+TheStageAI.initialize(api_token = token)
+TheStageAI.prefetch_model(repo_id = "TheStageAI/thewhisper-large-v3-turbo")
+```
+
+**Flutter**
+
+```dart
+await TheStageFlutterSDK.initialize(api_token: token);
+await TheStageFlutterSDK.prefetch_model(
+  repo_id: 'TheStageAI/thewhisper-large-v3-turbo');
+```
+
+> [!TIP]
+> - A fresh launch with no network cannot start any model: handle the
+>   `initialize` error and retry when connectivity returns.
+> - First-run download needs network regardless — do it on onboarding.
+
+## Device integrity
+
+A release build of your app does not load models on a device that
+looks compromised; a debuggable build always loads. A release-signed
+test app that needs a debugger attached can allow it with a manifest
+flag — never ship this in a production build:
+
+```xml
+<application ...>
+    <meta-data
+        android:name="ai.thestage.qlip.ALLOW_DEBUGGER"
+        android:value="true" />
+</application>
+```
 
 ## Model initializations
 
-After a model loads successfully, the SDK registers that
-initialization with the backend for per-model usage
-counting. The request carries the API token, the `deviceId` and the
-model's id — the repository its bundle was built from, as the bundle's
-signed manifest declares (or the `engines_path` the app passed, for a
-bundle without one). No prompts, audio, outputs or other user content
-are sent. Re-using a model that is already running is not a new
-initialization.
+When a model starts, the SDK counts that start with the backend for
+per-model usage: the API token, the `deviceId` and the model's id. No
+prompts, audio, outputs or other user content are sent. The count
+never delays or fails the start; when the device is offline it is sent
+later.
 
-`start_model` waits for that one request to answer or fail, but its
-outcome never fails the load. When the device is offline, the event
-is queued in app-private storage (capped per model) and replayed
-after the next successful registration; a rejected event is dropped.
+## Troubleshooting
 
-## Offline / network
-
-- The token is validated **online once per process** (cached
-  in-memory); a fresh app launch always re-validates online. There is
-  **no offline grace window** — the device must be reachable when
-  `initialize` runs, and a transport failure or backend rejection is a
-  hard init failure.
-- Connections are certificate-pinned to well-known public roots, so
-  corporate MITM proxies (custom interception CAs) will break
-  validation.
-
-## Device integrity (release builds)
-
-On a **release** build (the embedding app is not debuggable) the SDK
-runs a best-effort environment check before it loads any engine and
-**refuses to load** on an obviously compromised device — rooted,
-running under an emulator, under an instrumentation/injection
-framework, or with a debugger attached. It is a deterrence layer; the
-check never reveals which probe fired.
-
-- **Debug builds** (`android:debuggable="true"`) never enforce, so
-  development on emulators and under a debugger works normally.
-- A **release** build that legitimately needs a debugger attached (an
-  instrumented test app) can opt **only the debugger probe** out with a
-  manifest flag. Root / emulator / injection probes still enforce:
-
-  ```xml
-  <application ...>
-      <meta-data
-          android:name="ai.thestage.qlip.ALLOW_DEBUGGER"
-          android:value="true" />
-  </application>
-  ```
-
-  This is for test apps only — do not ship it in a production build.
-
-## Quick reference
-
-| Scenario | Pair | Seats |
+| Symptom | Cause | Fix |
 |---|---|---|
-| Same app, same device, relaunch | unchanged | 1 |
-| Reinstall or "clear data" | unchanged `deviceId` | 1 |
-| Factory reset | new `deviceId` | new seat |
-| Reinstall, fallback id (no `ANDROID_ID`) | new `deviceId` | server reuses the old seat within the reactivation window; otherwise a new seat |
-| Two different developers' apps, one device | different tokens | 2 |
-| App relaunch after a prior online validation | unchanged | 1 (re-validates online each launch) |
-
-## Agent Checklist
-
-- Always `initialize` before starting any pipeline — it registers the
-  device (online validation).
-- One seat = `(apiToken, deviceId)`; different tokens on one device
-  are different seats.
-- Do not invent your own device registry — the SDK owns device
-  identity.
-- Do not depend on internal ID derivation or backend field names —
-  they are not part of the public contract.
-- Pricing / quota changes → open a **Service Request** at
-  [app.thestage.ai/contact](https://app.thestage.ai/contact).
+| `start_model` fails with "not initialized" | `initialize` not awaited before it. | Await it first, once per process. |
+| `initialize` fails at launch with no network | The token is validated online at every launch. | Retry when connectivity returns. |
+| `initialize` fails on a corporate network | A proxy that intercepts TLS with its own certificate. | Let the app connect directly. |
+| A release test build refuses to load under a debugger | The device integrity check. | Add the `ALLOW_DEBUGGER` flag above to the test build only. |
+| Seat count higher than devices | Multiple tokens in use, or test tokens on production devices. | One token per app; open a Service Request at [app.thestage.ai/contact](https://app.thestage.ai/contact) for plan questions. |

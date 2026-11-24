@@ -15,10 +15,10 @@ the same response shape.
 
 | Model | HF repo | Size on disk | Context (tokens) | MTP | Thinking (default) | Tools |
 |---|---|---:|---:|:---:|---|:---:|
-| LFM2.5-230M | `TheStageAI/LFM2.5-230M` | 0.26 GB | 4096 | yes | — | yes |
-| LFM2.5-350M | `TheStageAI/LFM2.5-350M` | 0.32 GB | 4096 | yes | — | yes |
-| LFM2.5-1.2B | `TheStageAI/LFM2.5-1.2B` | 1.05 GB | 4096 | yes | — | yes |
-| LFM3-1.7B | `TheStageAI/LFM3-1.7B` | 1.46 GB | 4096 | yes | yes (on) | yes |
+| LFM2.5-230M | `TheStageAI/LFM2.5-230M` | 0.26 GB | 4096 (up to 32768) | yes | — | yes |
+| LFM2.5-350M | `TheStageAI/LFM2.5-350M` | 0.32 GB | 4096 (up to 32768) | yes | — | yes |
+| LFM2.5-1.2B | `TheStageAI/LFM2.5-1.2B` | 1.05 GB | 4096 (up to 32768) | yes | — | yes |
+| LFM3-1.7B | `TheStageAI/LFM3-1.7B` | 1.46 GB | 4096 (up to 32768) | yes | yes (on) | yes |
 | Qwen3.5-0.8B | `TheStageAI/Qwen3.5-0.8B` | 0.39 GB | 8192 | — | yes (off) | yes |
 | Qwen3.5-2B | `TheStageAI/Qwen3.5-2B` | 0.95 GB | 8192 | — | yes (off) | yes |
 | Qwen3.5-4B | `TheStageAI/Qwen3.5-4B` | 2.10 GB | 8192 | — | yes (off) | yes |
@@ -32,7 +32,8 @@ Snapdragon chips: 8 Gen 2 (SM8550), 8 Gen 3 (SM8650), 8 Elite
 models are on the [VLM](./vlm.md) page.
 
 The chat template, stop tokens, context size and per-call token cap
-all come from the bundle — you don't pick them. **MTP** and
+all come from the bundle; the context can be raised at load
+([Context size](#context-size-n_ctx)). **MTP** and
 **thinking** are described under [MTP and Thinking](#mtp-and-thinking),
 **tools** under [Tool calling](#tool-calling); `start_model` reports
 all three for the model it loaded.
@@ -134,6 +135,46 @@ returns an `LlmResult` with the outputs above; it also accepts
 `stop_sequences: List<String>`, which cuts the decoded text at the
 first match (one-shot path only).
 
+## Context size (`n_ctx`)
+
+The table's context is the default. The LFM2.5 models and
+LFM3-1.7B open with up to 32768 tokens when the start config asks
+for it:
+
+```kotlin
+TheStageAI.start_model(
+    model_name = "llm",
+    engines_path = "TheStageAI/LFM3-1.7B",
+    config = mapOf("n_ctx" to 32768),
+)
+```
+
+```dart
+await TheStageFlutterSDK.start_model(
+  model_name: 'llm',
+  engines_path: 'TheStageAI/LFM3-1.7B',
+  config: {'n_ctx': 32768},
+);
+```
+
+The value is rounded up to a multiple of 128; one above the
+model's largest opens with the largest, so the other models keep
+their table context. The context is chosen at load: start the
+model again to change it. A direct `TheStageLLM` takes the same key
+through `pipeline_options = mapOf("n_ctx" to 32768)`.
+
+Memory follows the conversation, not `n_ctx`: the KV cache grows
+as the conversation does and shrinks when a shorter one replaces
+it, so a large `n_ctx` costs nothing until a conversation uses it.
+Decoding slows as the conversation grows (each new token attends
+to all the earlier ones), and a long prompt takes longer to read
+before the first token.
+
+How much of a long context a model actually uses depends on the
+model: on very long contexts the smaller models still run and stay
+coherent, but recall details from early in the context less
+reliably. Test the lengths your app needs with your own prompts.
+
 ## MTP and Thinking
 
 Two optional features depend on the model. `start_model` returns a
@@ -212,6 +253,13 @@ await TheStageFlutterSDK.start_model(
 With MTP off the drafter is not loaded, which saves its memory. A
 direct `TheStageLLM` takes the same key through
 `pipeline_options = mapOf("use_mtp" to false)`.
+
+With MTP on, the runtime measures during each reply whether the
+drafter still saves time: on some texts, and at long contexts, its
+guesses are accepted too rarely to pay for themselves. When two
+measurements in a row find it slower than decoding without it, the
+LFM2.5 and LFM3 models stop using it for the rest of the
+conversation; a new conversation uses it again.
 
 ### Thinking (`enable_thinking`)
 
@@ -347,6 +395,27 @@ new user message is the last turn). The conversation
 (prompt and reply) must fit the model's context; trim the oldest
 turns as it grows.
 
+### Prompt cache
+
+The SDK also keeps the model's state after the system prompt and the
+tool list. A new conversation with the same system prompt and tools
+starts from that state instead of processing them again, and the
+state is saved next to the model (a file of tens of MB), so the first
+request after the next app start skips them too. Keep the system
+prompt and tools the same across conversations to benefit (text that
+changes every day, such as today's date, belongs in the user message);
+a request with different ones replaces the saved state. The file goes
+with the model when it is removed or updated. The cache is on by
+default; turn it off in the start config:
+
+```kotlin
+config = mapOf("prompt_cache" to false)
+```
+
+```dart
+config: {'prompt_cache': false},
+```
+
 ## Streaming
 
 Token-by-token generation. Each chunk before the terminal sentinel
@@ -413,7 +482,8 @@ the text your app shows or speaks never contains it.
 |---|---|
 | LFM2.5-230M, LFM2.5-350M, LFM2.5-1.2B, LFM3-1.7B | yes |
 | Qwen3.5-0.8B, Qwen3.5-2B, Qwen3.5-4B, Qwen3.5-9B | yes |
-| [VLM](./vlm.md) models (LFM2.5-VL, Gemma 4) | no — the VLM surface does not read `tools` |
+| Gemma 4 E2B ([VLM](./vlm.md#gemma-4-chat-requests)) | yes |
+| LFM2.5-VL-450M, LFM2.5-VL-1.6B | no |
 
 `features.tools.supported` (from `start_model`, or `llm.features` /
 `llm.supports_tool_calling` on a direct `TheStageLLM`) says whether
@@ -725,9 +795,9 @@ What they do and where data goes:
 | `calculate` | On device | Nothing |
 | phone tools | On device: they open the browser, dialer, maps, SMS or e-mail composer for the user to confirm (the dialer opens; it never places a call), copy to the clipboard, read the battery | Nothing |
 
-- The web tools need network access; the requests carry the user
-  agent `TheStageSDK-DefaultTools/1.0 (+https://thestage.ai;
-  voice-agent tools)`, except the DuckDuckGo results page, which gets
+- The web tools need network access; the requests identify
+  themselves with a TheStage user agent that links to
+  https://thestage.ai, except the DuckDuckGo results page, which gets
   a browser's. Their answers are short plain
   text; a failure is a sentence the model can say ("Weather lookup
   failed."), never a throw.
@@ -867,7 +937,8 @@ val llm = TheStageLLM(
 > `device` is accepted so the Kotlin and Flutter/JSON call sites match,
 > but backend routing (framework + device) is authoritative in the
 > bundle, so an override here is a no-op by design. The context size
-> likewise comes from the bundle.
+> comes from the bundle unless `pipeline_options` has `n_ctx`
+> ([Context size](#context-size-n_ctx)).
 
 The direct constructor loads from a **local** directory only — it does
 not download. Use `TheStageAI.prefetch_model(...)` (or `start_model`)

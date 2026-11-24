@@ -17,6 +17,10 @@ a screen recorder for capturing demos.
 - **Model residency** — a host-side `ModelRoster` starts the VLM for the
   caption burst and stops it afterwards, so heavy vision work only runs
   in a quiet agent state and never fights STT / LLM / TTS.
+- **Long conversations** — the on-device LLM opens with a 32768-token
+  context and hears the last 50 turns (`llm_n_ctx`, `memory_turns` in
+  `lib/backend/settings_model.dart`); memory grows with the
+  conversation, not with the context.
 - **Screen recording** — `TSScreenRecorder` captures the screen
   plus a mic + assistant audio mix to the gallery, for demo clips.
 

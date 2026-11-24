@@ -31,7 +31,7 @@ internal fun TheStageFlutterPlugin.__handle_voice_agent_start(
     val config =
         (call.arguments as? Map<String, Any?>) ?: emptyMap()
     // start() loads VAD / wake-word / Whisper / TTS / LLM inline —
-    // mmap + Genie/QNN context creation must not run on the main
+    // mmap + NPU session creation must not run on the main
     // thread (ANR otherwise), matching __handle_start_model.
     __scope.launch(Dispatchers.Default) {
         try {

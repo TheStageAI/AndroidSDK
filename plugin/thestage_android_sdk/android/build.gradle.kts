@@ -29,7 +29,7 @@ android {
     }
 
     // libc++_shared.so is already bundled by the
-    // SDK AAR (genie_neutts JNI). Exclude the copy
+    // SDK AAR (its JNI libs). Exclude the copy
     // produced by our espeak-ng CMake build.
     packaging {
         jniLibs {

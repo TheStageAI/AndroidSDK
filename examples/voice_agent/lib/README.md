@@ -80,7 +80,10 @@ state change repaints the relevant bubbles.
 
 - **LLM** — `llm_provider` / `llm_model` / `llm` (the on-device engines) /
   `llm_endpoint` / `llm_api_key` / `system_prompt` / `llm_tools` /
-  `max_tokens` / `temperature`. `llm_tools` (`web` here: weather,
+  `max_tokens` / `temperature` / `llm_n_ctx` / `memory_turns`. The
+  on-device LLM opens with a 32768-token context (`llm_n_ctx`; a model
+  opens with at most its own largest) and the agent sends it the last
+  50 turns (`memory_turns`). `llm_tools` (`web` here: weather,
   time, search) picks the on-device LLM's built-in tools; the system
   prompt keeps a "Tool pattern (always):" block that tells the model
   to speak a short filler before a call. The default provider is

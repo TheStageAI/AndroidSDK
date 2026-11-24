@@ -10,8 +10,13 @@ import ai.thestage.thestage_android_sdk.handlers.__handle_audio_start
 import ai.thestage.thestage_android_sdk.handlers.__handle_audio_stop
 import ai.thestage.thestage_android_sdk.handlers.__handle_available_updates
 import ai.thestage.thestage_android_sdk.handlers.__handle_bundled_engine_path
+import ai.thestage.thestage_android_sdk.handlers.__handle_cancel_start_model
 import ai.thestage.thestage_android_sdk.handlers.__handle_check_model_availability
+import ai.thestage.thestage_android_sdk.handlers.ASRNodeEngineHandlers
+import ai.thestage.thestage_android_sdk.handlers.__handle_asr_engine_start
+import ai.thestage.thestage_android_sdk.handlers.__handle_asr_engine_stop
 import ai.thestage.thestage_android_sdk.handlers.__handle_finish_stream
+import ai.thestage.thestage_android_sdk.handlers.__handle_flush_stream
 import ai.thestage.thestage_android_sdk.handlers.__handle_infer
 import ai.thestage.thestage_android_sdk.handlers.__handle_initialize
 import ai.thestage.thestage_android_sdk.handlers.__handle_installed_models
@@ -52,6 +57,7 @@ import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_stop
 import ai.thestage.thestage_android_sdk.handlers.__handle_voice_agent_update_interrupt_config
 import ai.thestage.thestage_android_sdk.internal.MethodChannels
 import ai.thestage.thestage_android_sdk.internal.MethodRoute
+import ai.thestage.thestage_android_sdk.streams.ASRStreamHandler
 import ai.thestage.thestage_android_sdk.streams.DeveloperLogStream
 import ai.thestage.thestage_android_sdk.streams.InferStreamHandler
 import ai.thestage.thestage_android_sdk.streams.VoiceAgentBroadcastStream
@@ -70,8 +76,10 @@ import io.flutter.plugin.common.PluginRegistry
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 // ----------------------------------------------------------------------
 // TheStageFlutterPlugin
@@ -104,6 +112,8 @@ class TheStageFlutterPlugin :
     internal var __activity: Activity? = null
 
     internal var __stream_handler: InferStreamHandler? = null
+    internal var __asr_handler: ASRStreamHandler? = null
+    internal var __asr_node_engine: ASRNodeEngineHandlers? = null
     internal var __voice_agent_handler: VoiceAgentStateStream? = null
 
     internal val __audio_players:
@@ -113,6 +123,11 @@ class TheStageFlutterPlugin :
     internal val __scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main
     )
+
+    // In-flight start_model calls keyed by model_name, so
+    // cancel_start_model can stop a load the app no longer wants.
+    internal val __start_jobs: ConcurrentHashMap<String, Job> =
+        ConcurrentHashMap()
 
     // Private Attributes
     // ------------------------------------------------------------------
@@ -127,6 +142,7 @@ class TheStageFlutterPlugin :
     private lateinit var __va_ports_channel: EventChannel
     private lateinit var __va_nodes_channel: MethodChannel
     private lateinit var __logs_channel: EventChannel
+    private lateinit var __asr_engine_channels: List<EventChannel>
 
     private var __activity_binding: ActivityPluginBinding? = null
 
@@ -162,6 +178,28 @@ class TheStageFlutterPlugin :
         )
         __tts_channel.setStreamHandler(stream_handler)
         __stream_handler = stream_handler
+        // Push ASR sessions (Dart `ASRStream`) emit on the same
+        // stream channel, keyed by stream_id.
+        __asr_handler = ASRStreamHandler(__scope) { stream_handler.sink }
+
+        // Microphone-mode ASR engine (Dart `TSASREngine`): one
+        // EventChannel per engine output; Dart may listen before
+        // asr_engine.start.
+        val asr_engine = ASRNodeEngineHandlers(__scope)
+        __asr_node_engine = asr_engine
+        __asr_engine_channels = listOf(
+            MethodChannels.ASR_ENGINE_TURNS to asr_engine.turns,
+            MethodChannels.ASR_ENGINE_TRANSCRIPTS to
+                asr_engine.transcripts,
+            MethodChannels.ASR_ENGINE_PARTIALS to asr_engine.partials,
+            MethodChannels.ASR_ENGINE_VAD_PROBABILITIES to
+                asr_engine.vad_probabilities,
+            MethodChannels.ASR_ENGINE_EVENTS to asr_engine.events,
+        ).map { (name, handler) ->
+            EventChannel(binding.binaryMessenger, name).also {
+                it.setStreamHandler(handler)
+            }
+        }
 
         // Voice-agent state stream backs the main
         // `voice_agent_events` channel and owns the agent;
@@ -258,12 +296,10 @@ class TheStageFlutterPlugin :
         // Engine teardown = app quit (graceful exit /
         // swipe-away destroys the activity + engine). Close
         // all active models so the SDK releases its
-        // NPU/Hexagon (QNN) contexts. The app's foreground
+        // NPU/Hexagon sessions. The app's foreground
         // service keeps the process alive after the UI
-        // closes, so without this a context stays allocated
-        // and the next launch's Start fails to create a
-        // fresh one ("Failed to create context from binary.
-        // Error code: 1002"). Best-effort — a hard OS kill
+        // closes, so without this a DSP session stays
+        // allocated into the next launch. Best-effort — a hard OS kill
         // may skip this; backgrounding never reaches here,
         // so background work keeps running.
         try {
@@ -286,6 +322,17 @@ class TheStageFlutterPlugin :
         __va_ports_channel.setStreamHandler(null)
         __va_nodes_channel.setMethodCallHandler(null)
         __logs_channel.setStreamHandler(null)
+        for (c in __asr_engine_channels) c.setStreamHandler(null)
+        __asr_handler?.cancel_all()
+        __asr_handler = null
+        // Off the main thread and outside __scope (cancelled below):
+        // the engine releases the microphone and its models.
+        __asr_node_engine?.let { engine ->
+            CoroutineScope(Dispatchers.Default).launch {
+                try { engine.stop() } catch (_: Throwable) {}
+            }
+        }
+        __asr_node_engine = null
 
         for (p in __audio_players.values) {
             try { p.stop() } catch (_: Throwable) {}
@@ -400,6 +447,8 @@ class TheStageFlutterPlugin :
                 __handle_stream_cancel(call, result)
             MethodRoute.SEND ->
                 __handle_send_stream(call, result)
+            MethodRoute.FLUSH ->
+                __handle_flush_stream(call, result)
             MethodRoute.FINISH_STREAM ->
                 __handle_finish_stream(call, result)
             MethodRoute.STOP_STREAM ->
@@ -448,6 +497,13 @@ class TheStageFlutterPlugin :
                 __handle_voice_agent_send_request(call, result)
             MethodRoute.VOICE_AGENT_SET_SYSTEM_PROMPT ->
                 __handle_voice_agent_set_system_prompt(call, result)
+
+            // ASR engine (microphone mode)
+            MethodRoute.ASR_ENGINE_START ->
+                __handle_asr_engine_start(call, result)
+            MethodRoute.ASR_ENGINE_STOP ->
+                __handle_asr_engine_stop(call, result)
+
             MethodRoute.SCREEN_RECORDER_IS_RECORDING ->
                 __handle_screen_recorder_is_recording(call, result)
             MethodRoute.SCREEN_RECORDER_START ->
@@ -460,6 +516,8 @@ class TheStageFlutterPlugin :
                 __handle_prefetch_model(call, result)
             MethodRoute.ANDROID_CHECK_MODEL_AVAILABILITY ->
                 __handle_check_model_availability(call, result)
+            MethodRoute.ANDROID_CANCEL_START_MODEL ->
+                __handle_cancel_start_model(call, result)
 
             else -> result.notImplemented()
         }

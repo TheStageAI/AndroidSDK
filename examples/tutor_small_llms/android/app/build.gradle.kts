@@ -11,18 +11,6 @@ android {
     // against — silences the AGP "plugin requires NDK 28.2" warning.
     ndkVersion = "28.2.13676358"
 
-    // Genie: optional extra jni dir (tarball unpack). The default
-    // staging path used by scripts/setup.sh (QAIRT=…) is
-    // src/main/jniLibs/arm64-v8a — no env needed. If you keep libs elsewhere:
-    //   export QAIRT_ANDROID_JNI=/path/to/extra/jni
-    sourceSets {
-        getByName("main") {
-            val extra = System.getenv("QAIRT_ANDROID_JNI")
-            if (!extra.isNullOrBlank()) {
-                jniLibs.srcDir(extra)
-            }
-        }
-    }
 
     defaultConfig {
         applicationId = "com.example.tutor_small_llms"
@@ -64,15 +52,8 @@ android {
     }
 
     packaging {
-        // TheStageCore.aar and onnxruntime-android.aar
-        // both bundle native libs — pick the custom
-        // QNN-enabled ones from TheStageCore.
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime.so"
-        )
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime4j_jni.so"
-        )
+        // TheStageCore.aar and the espeak build both carry
+        // libc++_shared.so.
         jniLibs.pickFirsts.add(
             "lib/arm64-v8a/libc++_shared.so"
         )
@@ -88,12 +69,7 @@ dependencies {
 
     implementation(files("$pluginLibs/TheStageCore.aar"))
     implementation(
-        files("$pluginLibs/onnxruntime-android.aar")
-    )
-
-    // Qualcomm QNN Runtime (signed skel libraries).
-    implementation(
-        "com.qualcomm.qti:qnn-runtime:2.51.0"
+        "com.microsoft.onnxruntime:onnxruntime-android:1.27.0"
     )
 
     // TFLite (for litert mode)

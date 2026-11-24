@@ -134,8 +134,7 @@ class ModelAvailabilityResult {
 // Typed exceptions (Android-only error surfaces)
 // ---------------------------------------------------------------------------
 
-/// Thrown when the input exceeds the LLM bundle's compiled capacity
-/// (Genie's static-cache constraint). Apps surface this with a
+/// Thrown when the input exceeds the LLM's context capacity. Apps surface this with a
 /// "shorten your input" UI.
 class InputTooLongException implements Exception {
   InputTooLongException({required this.message});
@@ -656,6 +655,23 @@ class TheStageFlutterSDK {
     }
   }
 
+  /// Cancel a [start_model] still in progress for [model_name] (an
+  /// app that switched to another model): its download stops and the
+  /// pending [start_model] fails. The partial download is kept, so a
+  /// later [start_model] resumes it. Quietly does nothing when no
+  /// start is running under that name, or on a platform without it.
+  /// Android-only.
+  static Future<void> cancel_start_model({
+    required String model_name,
+  }) async {
+    try {
+      await _channel.invokeMethod(
+        MethodRoute.androidCancelStartModel,
+        {'model_name': model_name},
+      );
+    } catch (_) {}
+  }
+
   static Future<Map<String, dynamic>> stop_model({
     required String model_name,
   }) async {
@@ -761,8 +777,9 @@ class TheStageFlutterSDK {
   /// Push input into a live [infer_stream] session.
   ///
   /// Only models whose streaming path accepts input after the
-  /// stream opens support this — ASR today. For speech, pass
-  /// `{'audio': <List<double> 16 kHz mono in [-1, 1]>}`.
+  /// stream opens support this — Nemotron diarization and
+  /// `nemotron-multispeaker`. Pass `{'audio': <16 kHz mono
+  /// samples in [-1, 1]>}`. For live ASR use `ASRStream`.
   ///
   /// Models that take their whole input up front (NeuTTS,
   /// LFM2-VL) reject it.
@@ -829,6 +846,76 @@ class TheStageFlutterSDK {
         if (asr_model != null) 'asr': asr_model,
       },
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Push streams (by stream_id)
+  // -------------------------------------------------------------------------
+
+  /// Open a push stream of [kind] (`'asr'`: an `ASRStream` session on
+  /// [model_name]) and return its id. Its events arrive on
+  /// [events_for]. Prefer `ASRStream.open`.
+  static Future<String> open_push_stream({
+    required String model_name,
+    required String kind,
+    Map<String, dynamic> input_json = const {},
+    String? stream_id,
+  }) async {
+    _ensureStreamChannel();
+    final id = stream_id ?? _makeStreamId(model_name);
+    await _channel.invokeMethod(MethodRoute.startStream, {
+      'model_name': model_name,
+      'input_json': input_json,
+      'stream_id': id,
+      'kind': kind,
+    });
+    return id;
+  }
+
+  /// The events of the push stream [stream_id].
+  static Stream<Map<String, dynamic>> events_for(String stream_id) {
+    _ensureStreamChannel();
+    return _streamEvents!.stream.where(
+      (chunk) => chunk['stream_id'] == stream_id,
+    );
+  }
+
+  /// Send 16 kHz mono samples to the ASR push stream [stream_id].
+  static Future<void> send_pcm({
+    required String stream_id,
+    required Float32List pcm,
+  }) async {
+    await _channel.invokeMethod(MethodRoute.send, {
+      'stream_id': stream_id,
+      'pcm': pcm,
+    });
+  }
+
+  /// End the current turn of the ASR push stream [stream_id].
+  static Future<void> flush_stream({required String stream_id}) async {
+    await _channel.invokeMethod(MethodRoute.flush, {
+      'stream_id': stream_id,
+    });
+  }
+
+  /// Close the push stream [stream_id]; an ASR stream replies with its
+  /// final result (the `ASRResult` JSON), other streams with `{}`.
+  static Future<Map<String, dynamic>> close_stream({
+    required String stream_id,
+  }) async {
+    final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+      MethodRoute.finishStream,
+      {'stream_id': stream_id},
+    );
+    return _asMap(result);
+  }
+
+  /// Abandon the push stream [stream_id]; its events end with
+  /// `cancelled`.
+  static Future<void> cancel_stream({required String stream_id}) async {
+    await _channel.invokeMethod(MethodRoute.stopStream, {
+      'stream_id': stream_id,
+    });
   }
 
   static Future<void> send({

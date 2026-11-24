@@ -1,14 +1,17 @@
 # Speaker Embedding (Speaker ID)
 
 On-device speaker embedding for enrollment and cosine verification.
-The model is **ReDimNet2 B0**, shipped as `TheStageAI/redimnet2` and
+The model is **ReDimNet2 B0**, shipped as `TheStageAI/speaker-id-v2` and
 addressed by model type `speaker-id`.
 
 It maps a **2 s / 16 kHz mono** window to a **192-d, L2-normalized**
-embedding; two utterances are compared by **cosine similarity**. The
-model is a two-engine chain (a CPU mel front-end feeding the backbone)
-that runs on **ORT-CPU** — it does not use the Snapdragon NPU, and at a
-few milliseconds per call it doesn't need to.
+embedding; two utterances are compared by **cosine similarity**.
+
+It runs on the NPU on Snapdragon 8 Gen 2, 8 Gen 3, 8 Elite and
+8 Elite Gen 5, and on the CPU on every other phone. With `device`
+unset, a start on a supported chip whose NPU build does not open
+falls back to the CPU build on its own. Both builds return vectors
+in the same format.
 
 ## Basic Usage
 
@@ -23,7 +26,7 @@ TheStageAI.initialize(api_token = "your-api-token")
 TheStageAI.start_model(
     model_name = "speaker_id",
     model_type = "speaker-id",
-    engines_path = "TheStageAI/redimnet2",
+    engines_path = "TheStageAI/speaker-id-v2",
 )
 
 // Enroll: audio only → embedding.
@@ -60,7 +63,7 @@ await TheStageFlutterSDK.initialize(api_token: 'your-api-token');
 await TheStageFlutterSDK.start_model(
   model_name: 'speaker_id',
   model_type: 'speaker-id',
-  engines_path: 'TheStageAI/redimnet2',
+  engines_path: 'TheStageAI/speaker-id-v2',
 );
 
 // Enroll → embedding.
@@ -88,9 +91,9 @@ final similarity = check[0]['similarity'] as double;
 | Item | Value |
 |---|---|
 | Sample rate | **16 000 Hz** mono float (`FloatArray` / `Float32List`), samples in `[-1, 1]` |
-| Window | **2.0 s** (32 000 samples). Any length in — longer is trimmed to the trailing window, shorter is left-zero-padded |
+| Window | **2.0 s** (32 000 samples). Any length in — longer keeps the trailing 2 s, shorter is repeated to fill the window |
 | Output dim | **192**, L2-normalized |
-| Compute device | **CPU** (ORT) — the NPU is not used |
+| Compute device | NPU on the supported chips, CPU elsewhere (see above) |
 
 ## Inputs / Outputs (JSON)
 
@@ -138,8 +141,8 @@ fires **and** the trailing speech scores at/above
 ## Agent checklist
 
 - Model type `speaker-id`; common handle `speaker_id`; repo
-  `TheStageAI/redimnet2`.
+  `TheStageAI/speaker-id-v2`.
 - Always 16 kHz mono float; 2 s window; 192-d output.
 - Verify = audio + reference `embedding` → `similarity`; you pick the
   threshold.
-- Runs on CPU — do not assume the NPU.
+- Leave `device` unset: NPU on supported chips, CPU elsewhere.

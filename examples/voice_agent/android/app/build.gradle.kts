@@ -51,15 +51,8 @@ android {
     }
 
     packaging {
-        // TheStageCore.aar and onnxruntime-android.aar
-        // both bundle native libs — pick the custom
-        // QNN-enabled ones from TheStageCore.
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime.so"
-        )
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime4j_jni.so"
-        )
+        // TheStageCore.aar and the espeak build both carry
+        // libc++_shared.so.
         jniLibs.pickFirsts.add(
             "lib/arm64-v8a/libc++_shared.so"
         )
@@ -75,12 +68,7 @@ dependencies {
 
     implementation(files("$pluginLibs/TheStageCore.aar"))
     implementation(
-        files("$pluginLibs/onnxruntime-android.aar")
-    )
-
-    // Qualcomm QNN Runtime (signed skel libraries).
-    implementation(
-        "com.qualcomm.qti:qnn-runtime:2.51.0"
+        "com.microsoft.onnxruntime:onnxruntime-android:1.27.0"
     )
 
     // Transitive deps of TheStageCore
