@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  * every named agent port onto one Dart sink as `{port, value}` maps:
  * the built-in channels (`llm.delta`, `transcripts.final`,
  * `vad.probability`) plus any custom node port registered via
- * [register_node_port_forward]. Mirrors Qlip.Swift's
+ * [register_node_port_forward]. Mirrors the iOS plugin's
  * `VoiceAgentPortStream`.
  */
 class VoiceAgentPortStream(

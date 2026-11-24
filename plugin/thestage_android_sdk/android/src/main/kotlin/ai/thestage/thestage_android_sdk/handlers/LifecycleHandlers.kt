@@ -13,6 +13,7 @@ import android.util.Log
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -165,10 +166,10 @@ internal fun TheStageFlutterPlugin.__handle_start_model(
             }
         }
 
-    // Genie / large tokenizer / mmap must not run on main —
+    // NPU load / large tokenizer / mmap must not run on main —
     // ANR otherwise. Wake lock + foreground service are
     // acquired by TheStageAI.start_model internally.
-    __scope.launch(Dispatchers.Default) {
+    val job = __scope.launch(Dispatchers.Default) {
         try {
             val status = TheStageAI.start_model(
                 model_name = model_name,
@@ -180,15 +181,36 @@ internal fun TheStageFlutterPlugin.__handle_start_model(
                 config = config,
                 on_load_progress = on_load_progress,
             )
-            withContext(Dispatchers.Main) {
+            // NonCancellable: a start cancelled after it finished
+            // must still answer Dart.
+            withContext(NonCancellable + Dispatchers.Main) {
                 result.success(__encode_status(status))
             }
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
+            withContext(NonCancellable + Dispatchers.Main) {
                 __fail(result, e)
             }
         }
     }
+    __start_jobs[model_name] = job
+    job.invokeOnCompletion { __start_jobs.remove(model_name, job) }
+}
+
+/** Cancel an in-flight start_model: its download stops at the next
+ *  progress tick (the partial file is kept) and the start_model
+ *  call fails. No-op when nothing is loading under that name. */
+internal fun TheStageFlutterPlugin.__handle_cancel_start_model(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) {
+    val model_name =
+        (call.arguments as? Map<*, *>)?.get("model_name") as? String
+    if (model_name.isNullOrEmpty()) {
+        __fail(result, "Missing model_name.")
+        return
+    }
+    __start_jobs[model_name]?.cancel()
+    result.success(null)
 }
 
 internal fun TheStageFlutterPlugin.__handle_stop_model(

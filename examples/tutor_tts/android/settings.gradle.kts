@@ -24,12 +24,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven {
-            url = uri(
-                "https://qpm-download.qualcomm.com" +
-                "/maven/release"
-            )
-        }
     }
 }
 

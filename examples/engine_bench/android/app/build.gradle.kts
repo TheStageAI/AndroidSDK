@@ -11,17 +11,6 @@ android {
     // against — silences the AGP "plugin requires NDK 28.2" warning.
     ndkVersion = "28.2.13676358"
 
-    // Genie: optional extra jni dir. The default staging path is
-    // src/main/jniLibs/arm64-v8a — no env needed. If you keep libs elsewhere:
-    //   export QAIRT_ANDROID_JNI=/path/to/extra/jni
-    sourceSets {
-        getByName("main") {
-            val extra = System.getenv("QAIRT_ANDROID_JNI")
-            if (!extra.isNullOrBlank()) {
-                jniLibs.srcDir(extra)
-            }
-        }
-    }
 
     defaultConfig {
         applicationId = "com.example.engine_bench"
@@ -63,15 +52,8 @@ android {
     }
 
     packaging {
-        // TheStageCore.aar and onnxruntime-android.aar
-        // both bundle native libs — pick the custom
-        // QNN-enabled ones from TheStageCore.
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime.so"
-        )
-        jniLibs.pickFirsts.add(
-            "lib/arm64-v8a/libonnxruntime4j_jni.so"
-        )
+        // TheStageCore.aar and the espeak build both carry
+        // libc++_shared.so.
         jniLibs.pickFirsts.add(
             "lib/arm64-v8a/libc++_shared.so"
         )
@@ -87,29 +69,8 @@ dependencies {
 
     implementation(files("$pluginLibs/TheStageCore.aar"))
     implementation(
-        files("$pluginLibs/onnxruntime-android.aar")
+        "com.microsoft.onnxruntime:onnxruntime-android:1.27.0"
     )
-    // ort-genai powers the LLM bench only, and that tab is greyed
-    // out until an on-device chat-LLM bundle ships (see
-    // lib/main.dart). The AAR is also not part of the public SDK
-    // tree -- it is not in `make_dist.sh`'s AAR list and not
-    // covered by the published third-party notices -- so a hard
-    // dependency here made the app unbuildable from a public
-    // checkout while the feature needing it was disabled anyway.
-    //
-    // Optional: present in this repo, so re-enabling the LLM tab
-    // works with no gradle change; absent in the public tree,
-    // where the other three benches build and run.
-    val genai = file("$pluginLibs/onnxruntime-genai-android.aar")
-    if (genai.exists()) {
-        implementation(files(genai))
-    }
-
-    // Qualcomm QNN Runtime (signed skel libraries).
-    implementation(
-        "com.qualcomm.qti:qnn-runtime:2.51.0"
-    )
-
     // TFLite (for litert mode)
     implementation(
         "com.google.ai.edge.litertlm:litertlm-android:0.9.0"

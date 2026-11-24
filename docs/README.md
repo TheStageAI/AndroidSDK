@@ -2,12 +2,12 @@
 
 On-device speech, language, vision and audio inference for
 **Android** on Qualcomm Snapdragon. The SDK runs its models on the
-Hexagon NPU (language, vision and speech-recognition models on
-TheStage's own NPU runtime, the others through the QNN runtime),
-falls back to a model's portable **CPU** bundle, where it publishes
-one, on a chip it has no NPU bundle for, pulls engines from HuggingFace on first
-use, and exposes
-a unified `infer` / `infer_stream` API for every pipeline. No server
+Hexagon NPU through TheStage's own NPU runtime and its small stateful
+models (voice activity, turn detection, speaker models) on the CPU.
+It falls back to a model's portable **CPU** bundle, where it
+publishes one, on a chip it has no NPU bundle for, pulls engines from
+HuggingFace on first use, and exposes a unified `infer` /
+`infer_stream` API for every pipeline. No server
 in the hot path.
 
 This folder is the customer-facing reference for both consumption
@@ -19,13 +19,23 @@ surfaces: the native **Kotlin** singleton (`TheStageAI`) and the
 - [LLM (Language Model)](./llm.md) — on-device chat (LFM2.5, LFM3,
   Qwen3.5; Qwen3.5-9B on 8 Elite and 8 Elite Gen 5 only) with
   streaming, multi-turn history, MTP and thinking.
-- [Whisper ASR](./whisper.md) — speech-to-text with automatic VAD
-  chunking and long-audio stitching.
+- [ASR](./asr.md) — speech-to-text: transcribe a clip, live captions
+  (SDK-owned microphone or pushed audio), word timestamps, language
+  detection.
+- [Whisper ASR](./whisper.md) — the Whisper bundle: windows, bundle
+  VAD, direct pipeline.
+- [Qwen3-ASR](./qwen3_asr.md) — the Qwen3-ASR bundle: 30 languages,
+  language detection, estimated word times.
 - [VLM (Vision-Language)](./vlm.md) — on-device images + prompt → text
   (LFM2.5-VL, Gemma 4), batch and streaming.
 - [NeuTTS](./tts.md) — multilingual neural TTS (9 languages, in a
   nano and a full size) and an English-only nano, with batch +
   push-based streaming.
+- [Phonon and Pocket TTS](./phonon.md) — small, fast TTS: Phonon and
+  Pocket TTS in English, Pocket TTS in French, German, Italian,
+  Spanish, Portuguese, Dutch, Japanese, Chinese, Korean, Hindi,
+  Polish, Turkish, Greek and Russian; batch, streaming and voice
+  folders.
 - [VAD](./vad.md) — Silero VAD: stateful per-chunk speech detection.
 - [Streaming](./streaming.md) — TTS / LLM streaming patterns,
   back-pressure, sentence segmentation, Flutter consumers.
@@ -45,9 +55,19 @@ surfaces: the native **Kotlin** singleton (`TheStageAI`) and the
   (`nemotron-diarization`) and who said what
   (`nemotron-multispeaker`): streaming segments, speaker enrollment,
   and wiring the composite from models you already started.
-- [Licensing & Device Identity](./licensing.md) — how `(apiToken,
-  deviceId)` is derived on Android, what counts as a device, reinstall
-  behavior, device-integrity enforcement, and online-validation behavior.
+- [Entities, Personal Data and Relations](./glinerel.md) — GLiNEREL:
+  zero-shot entity, PII and relation extraction with free-text labels,
+  and redaction (`glinerel`).
+- [Embeddings (EmbeddingGemma)](./embedding_gemma.md) — text
+  embeddings, and with EmbeddingGemma 2 image, audio and video
+  embeddings in one space; task prompts, Matryoshka sizes
+  (`embedding-gemma`).
+- [Image Embeddings (MobileCLIP2)](./mobileclip2.md) — MobileCLIP2-S0
+  image encoder: 512-d image vectors on the NPU, CPU bundle on
+  other phones (`mobile-clip-image`).
+- [Licensing & Device Identity](./licensing.md) — seats
+  (`apiToken`, `deviceId`), reinstall behavior, online validation at
+  every launch, and the device-integrity check.
 - [Product Terms](./product_terms.md) — commercial / licensing summary:
   seat model and pricing via Service Request (no public rate card).
 - [Logging & Diagnostics](./logging.md) — the diagnostics ring, session
@@ -60,10 +80,9 @@ surfaces: the native **Kotlin** singleton (`TheStageAI`) and the
 ## Supported Devices
 
 Phones with Snapdragon 8 Gen 2 (SM8550), 8 Gen 3 (SM8650), 8 Elite
-(SM8750) or 8 Elite Gen 5 (SM8850). A model publishes either one
-NPU build per chip or a single NPU build that serves all of them
-(the language and vision-language models), and some also publish a
-portable CPU build; the SDK downloads the one that fits the phone
+(SM8750) or 8 Elite Gen 5 (SM8850). A model's NPU build serves all
+four chips, and some models also publish a portable CPU build, or
+publish only one; the SDK downloads the one that fits the phone
 (see [Choosing the device](./model_management.md#choosing-the-device)).
 The [availability check](./model_management.md#availability) tells
 you before a download whether a model has a build for the device.
@@ -161,15 +180,38 @@ always go through the JSON path.
 | Initialize | `TheStageAI.registerContext(context)` then `TheStageAI.initialize(api_token = "...")` | `await TheStageFlutterSDK.initialize(api_token: '...')` |
 | Start a model | `TheStageAI.start_model(model_name =, engines_path =, device =, config =)` | `await TheStageFlutterSDK.start_model(model_name:, engines_path:, device:, config:)` |
 | Stop a model | `TheStageAI.stop_model(model_name = "llm")` | `await TheStageFlutterSDK.stop_model(model_name: 'llm')` |
+| Cancel a load in progress | cancel the coroutine that called `start_model` | `await TheStageFlutterSDK.cancel_start_model(model_name:)` (the pending `start_model` fails; a partial download is kept and resumed by the next start) |
 | Single-shot inference | `TheStageAI.infer(model_name =, input_json =) -> List<Map<String, Any>>` | `await TheStageFlutterSDK.infer(model_name:, input_json:) -> List<Map<String, dynamic>>` |
 | Streaming inference | `TheStageAI.infer_stream(model_name =, input_json =) -> Flow<InferenceStreamChunk>` | `TheStageFlutterSDK.infer_stream(model_name:, input_json:, stream_id:?) -> Stream<Map<String, dynamic>>` |
 | Push text into a TTS stream | `val s = TheStageAI.open_tts_streamer(model_name = "tts")`; `s.send(text)`; `s.finish()`; collect `s.output` | `await TheStageFlutterSDK.send(stream_id:, text:); await TheStageFlutterSDK.finish_stream(stream_id:)` |
 | Cancel a running stream | cancel the collecting coroutine, or `s.cancel()` on a TTS streamer | `await TheStageFlutterSDK.stop_stream(stream_id:)` |
-| Push audio into an ASR stream | `TheStageAI.stream_append(model_name =, input_json =)`; `stream_finish(model_name =)` | `await TheStageFlutterSDK.stream_append(model_name:, input_json:)`; `stream_finish(model_name:)` |
+| Transcribe a clip | `TheStageAI.asr_engine(stt = "stt").infer(audio, config)` | `await ASREngine(stt: 'stt').infer(audio, config:)` |
+| Live captions, SDK owns the mic | `TheStageAI.asr_engine(TheStageAgentConfig(vad =, stt =)).start()`; collect `turns` | `TSASREngine().start(config:)`; listen to `turns` |
+| Push audio into an ASR stream | `asr_engine(stt =, vad =).open_stream(...)`; `send` / `flush` / `close` | `await ASRStream.open(model_name:, vad_model_name:)`; `send` / `flush` / `close` |
 | Installed models and updates | `installed_models()`, `available_updates()`, `remove_model(model_type =, repository =)` | same names on `TheStageFlutterSDK` |
 | Reclaim space | `TheStageAI.maintain()`; `reset_models()` to clear everything | `await TheStageFlutterSDK.maintain()`; `reset_models()` |
 | Load progress | `start_model(on_load_progress = { p: LoadProgress -> … })` | Single global stream `TheStageFlutterSDK.on_progress` (`{model_name, phase}`, plus `progress` while downloading or `status` when parked) |
 | Audio buffer type | `FloatArray` | `Float32List` (never `Float64List`) |
+
+### Starting a name that is already running
+
+- **Same model, same `config`**: no reload; the call returns
+  `running`. Repeated starts are one hold, and one `stop_model`
+  releases it.
+- **Same model, another `config`** (a voice switch): the model
+  reloads with the new config, unless something else also holds
+  it (a voice agent or an `ASREngine`), in which case the start
+  throws `ModelNameConflict`.
+- **Another model** (another `engines_path`, `revision` or
+  `devices`): throws `ModelNameConflict`. Stop the running one
+  first, or start the new one under another name.
+
+Kotlin callers can pass `owner =` to `start_model` / `stop_model`:
+each owner holds the model separately, and it unloads when the
+last one stops (`force = true` unloads at once). Calls without an
+owner share one hold. The voice agent and `ASREngine` hold their
+models under their own owners, so stopping one leaves a model the
+other still uses loaded.
 
 ## Load Progress
 
@@ -182,10 +224,10 @@ present. `progress` is only sent while a transfer is measurable:
 | `waiting_for_wifi`         | *absent*        | AI-pack download parked until an unmetered network. The user can act: prompt them to join Wi-Fi |
 | `waiting_for_confirmation` | *absent*        | AI-pack download needs the user's OK for metered data. Show Play's confirmation dialog |
 | `extracting`               | *absent*        | Bundle unpack to local cache (skipped on cache hit) |
-| `loading`                  | *absent*        | Pipeline construction, including first-run NPU context compile |
+| `loading`                  | *absent*        | Pipeline construction: model files opened and mapped onto the NPU |
 | `ready`                    | 1.00 (terminal) | Emitted on success only |
 
-Unpacking and NPU compilation report nothing
+Unpacking and loading report nothing
 intermediate, so those phases send no `progress` rather than a
 number that would sit frozen. Bind a determinate bar when
 `progress` is present and an indeterminate one when it is absent —
@@ -335,13 +377,11 @@ Practical consequences:
 `TheStageAI.initialize(api_token = ...)` (Kotlin), or
 `TheStageFlutterSDK.initialize(api_token: ...)` (Flutter), must be
 called once before any model is started. The token is validated online
-on first use (the device must be reachable then); there is no offline
-grace window. A per-process in-memory cache skips re-validation for the
-rest of that process, but a fresh app launch re-validates online. See
-[licensing.md](./licensing.md) for how devices are identified and
-counted on Android (the `deviceId` is derived from `ANDROID_ID`, so
-it survives reinstall and "clear data" and resets only on factory
-reset).
+(the device must be reachable then); there is no offline grace window.
+The validation holds for the rest of that process, and a fresh app
+launch validates online again. See [licensing.md](./licensing.md) for
+seats and device identity (the `deviceId` survives reinstalls and
+"clear data"; a factory reset gives a new one).
 
 ## Model cache & storage
 
@@ -391,7 +431,7 @@ variant instead: neither has a repo commit to key on.
 - Dart `TTSController.downloadProgress` is `double?` (null outside
   `downloading`). Its `modelType` defaults to `'neutts'` (was
   `'neutts-multilingual'`) and its `revision` to `''`, the pinned
-  commit (was `'develop'`).
+  commit.
 - Voice agent: every `*_device` field of `TheStageAgentConfig` (and
   the matching Flutter config keys) defaults to `""`, the best
   available bundle for each component (they were `"npu"` / `"cpu"`).
@@ -421,11 +461,13 @@ variant instead: neither has a repo commit to key on.
 
 ## Where things live
 
-- **Prebuilt binaries**: `TheStageCore.aar` + the ONNX Runtime
-  AAR at the distribution root.
+- **Prebuilt binary**: `TheStageCore.aar` at the distribution root.
+  ONNX Runtime is the stock
+  `com.microsoft.onnxruntime:onnxruntime-android:1.27.0` from Maven
+  Central, declared by the app.
 - **Flutter plugin (Dart)**:
   `plugin/thestage_android_sdk/lib/thestage_android_sdk.dart`
 - **Example apps**: `examples/{engine_bench, tutor_small_llms,
   tutor_tts, voice_agent, voice_agent_custom_nodes}/`
-- **One-time setup**: `scripts/setup.sh` (AAR symlinks, QAIRT Genie
-  libs, secrets bootstrap — see the top-level `README.md`).
+- **One-time setup**: `scripts/setup.sh` (AAR symlink, secrets
+  bootstrap — see the top-level `README.md`).

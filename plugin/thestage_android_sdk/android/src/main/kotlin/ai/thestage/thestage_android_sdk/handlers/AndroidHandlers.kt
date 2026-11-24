@@ -14,8 +14,7 @@ import kotlinx.coroutines.withContext
 // Android-only Handlers
 // ----------------------------------------------------------------------
 //
-// Routes with no iOS equivalent, preserved (snake_cased)
-// from the original thestage_android_sdk plugin: prefetch_model,
+// Routes with no iOS equivalent: prefetch_model,
 // check_model_availability.
 
 @Suppress("UNCHECKED_CAST")

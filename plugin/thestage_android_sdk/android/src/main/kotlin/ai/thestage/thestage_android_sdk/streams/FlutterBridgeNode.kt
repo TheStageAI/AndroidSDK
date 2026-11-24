@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 /**
  * Custom agent node that forwards its lifecycle hooks + the shared
  * event bus to Dart over [MethodChannels.VOICE_AGENT_NODES]. Mirrors
- * Qlip.Swift's `FlutterBridgeNode`, adapted to the Android node
+ * the iOS plugin's `FlutterBridgeNode`, adapted to the Android node
  * discipline (extends [TheStageAgentNode], collects on the inherited
  * serialized [scope]).
  *

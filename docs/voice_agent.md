@@ -324,7 +324,8 @@ await sub.cancel();
 |-------|------|---------|-------------|
 | `vad` | String | required | HF id or local path of Silero VAD bundle |
 | `stt` | String | required | HF id or local path of Whisper bundle |
-| `tts` | String? | `null` | HF id or local path of NeuTTS bundle (required to speak) |
+| `tts` | String? | `null` | HF id or local path of the TTS bundle: NeuTTS, Phonon or Pocket TTS (required to speak) |
+| `tts_model_type` | String? | `null` | Kotlin only. `neutts`, `phonon` or `pocket-tts`; `null` = the type the SDK pins for `tts`, else `neutts` (set it for a local Phonon / Pocket bundle) |
 | `tts_voice` | String | `"paul"` | Voice id from the TTS bundle |
 | `tts_voice_dir` | String? | `null` | A [voice pack](#voices) folder holding `voice.json`. Wins over `tts_voice` |
 | `tts_language` | String? | `null` | TTS language override, e.g. `"french"`. `null` = the voice's own language |
@@ -334,7 +335,7 @@ await sub.cancel();
 | `tts_revision` | String | `""` | TTS commit; empty = the pinned commit. Leave it empty |
 | `vad_revision` | String | `""` | VAD commit; empty = the pinned commit. Leave it empty |
 | `ww_revision` | String | `""` | Wake-word commit; empty = the pinned commit |
-| `speaker_id` | String? | `null` | Speaker-id bundle (`TheStageAI/redimnet2`) — HF id or local path. Loaded only when a `turn_start_mode` or `interrupt_mode` needs speaker verification |
+| `speaker_id` | String? | `null` | Speaker-id bundle (`TheStageAI/speaker-id-v2`) — HF id or local path. Loaded only when a `turn_start_mode` or `interrupt_mode` needs speaker verification |
 | `speaker_id_revision` | String | `""` | Speaker-id commit; empty = the pinned commit |
 | `speaker_similarity_threshold` | Double | 0.75 | Similarity to the enrolled embedding a speaker must reach to be verified |
 | `enrolled_speaker_embedding` | `DoubleArray?` (Flutter `List<double>`) | `null` | The speaker to verify against; or call `enroll_speaker` on a running agent |
@@ -363,9 +364,9 @@ bundle its model publishes for the phone, exactly like
 publishes no such bundle — Silero VAD, for one, publishes only a CPU
 bundle.
 
-The Qualcomm Snapdragon NPU (Hexagon) runs the heavy models: Whisper's
-encoder/decoder and the on-device LLM on TheStage's own NPU runtime,
-the NeuTTS LLM through QNN (compiled context binaries). Both keep running when the app is in the background
+The Qualcomm Snapdragon NPU (Hexagon) runs the heavy models — Whisper's
+encoder/decoder, the on-device LLM and the TTS models — on TheStage's
+own NPU runtime. They keep running when the app is in the background
 (with a foreground service). Small stateful models (Silero VAD, the
 smart-turn classifier) run on ORT-CPU regardless — they don't benefit
 from the NPU. Some sub-modules are pinned per the bundle's
@@ -376,8 +377,10 @@ from the NPU. Some sub-modules are pinned per the bundle's
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `llm_provider` | String | `"local"` (Flutter: `"openai_compatible"`) | `"local"` (on-device SDK model) or `"openai_compatible"` (remote SSE chat-completions) |
-| `llm` | String? | `null` | Local: engines path of the on-device LLM |
+| `llm` | String? | `null` | Local: engines path of the on-device LLM, or of Gemma 4 E2B (`TheStageAI/gemma-4-E2B-it`), whose chat runs on its text model |
+| `llm_model_type` | String? | `null` | Kotlin only. `llm` or `gemma4-vl`; `null` = `gemma4-vl` when the SDK pins `llm` as Gemma 4, else `llm` |
 | `llm_revision` | String | `""` | Local LLM commit; empty = the pinned commit. Leave it empty |
+| `llm_n_ctx` | Int | `0` | Local LLM context in tokens, as `start_model`'s `n_ctx` ([LLM context size](./llm.md#context-size-n_ctx)); `0` = the bundle's. A value above the model's largest opens with the largest. Memory grows with the conversation, not with this value |
 | `llm_model` | String | `"gpt-4o-mini"` | Remote model id |
 | `llm_endpoint` | String | OpenAI chat-completions | Remote endpoint URL |
 | `llm_api_key` | String | `""` | Remote API key |
@@ -385,9 +388,11 @@ from the NPU. Some sub-modules are pinned per the bundle's
 | `system_prompt` | String | `DefaultTools.voice_system_prompt` | Prepended as a system message. The default is a short spoken assistant that knows when and how to use [tools](#tools). |
 | `llm_tools` | String | `"voice"` | Built-in [tools](#tools) of the on-device LLM: `voice`, `web`, `phone` or `none` |
 | `tools` | `List<Tool>?` | `null` | Kotlin only: your own tools for the on-device LLM; replaces the `llm_tools` preset |
+| `unspoken_tags` | `List<String>` | `[]` | Kotlin only. Reply text between `<tag>` and `</tag>` for these tag names (`"*"`: any tag) is kept in the reply and not spoken, e.g. a drafted email in `<email>`. Those tags are not spoken either |
 | `max_tokens` | Int | 256 | Generation cap |
 | `temperature` | Double | 0.7 | Sampling temperature |
 | `chat_memory` | `ChatMemory` | `SlidingWindowMemory(max_turns = 10)` | Kotlin only. History strategy |
+| `memory_turns` | Int | `10` | Flutter: the history window, the last N user + assistant turn pairs sent to the LLM (sets `chat_memory` to `SlidingWindowMemory(max_turns = N)`) |
 
 ### VAD / endpointing
 
@@ -457,7 +462,7 @@ a confident wrong answer.
 | `turn_max_silence_ms` | Int | 5000 | Hard fallback; MUST be < `turn_window_ms` |
 | `turn_window_ms` | Int | 8000 | Trailing audio window fed to the model |
 | `turn_min_speech_ms` | Int | 250 | Minimum voiced speech before the model is consulted |
-| `turn_asr_silence_hangover_ms` | Int | 200 | Trailing silence still fed to streaming ASR after speech stops (bounds "mm"/"?" filler; the turn model still sees the full pause) |
+| `turn_asr_silence_hangover_ms` | Int | 200 (= unset) | Trailing silence still fed to the ASR after speech stops (bounds "mm"/"?" filler; the turn model still sees the full pause); see [Streaming transcription](#streaming-transcription-asr) |
 
 ```kotlin
 import ai.thestage.qlip.voice_agent.graph.TurnEndMode
@@ -489,35 +494,45 @@ it doesn't truncate finals on your audio.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `asr_streaming` | Boolean | `true` | Emit live partial captions (`user_request_partial`) while the user speaks. Purely cosmetic — the authoritative transcript is identical whether this is on or off. |
-| `asr_partial_interval_ms` | Int | 600 | Minimum new audio between caption passes (bounds redundant decoding). Streaming only. |
-| `speculative_whisper` | Boolean | `true` | Decode a speculative full-utterance pass at the first VAD pause so the final transcript is warm by end-of-turn (low-latency final). |
+| `asr_streaming` | Boolean | `true` | Emit live partial captions (`user_request_partial`) while the user speaks. The request text is the same whether this is on or off. |
+| `asr_partial_interval_ms` | Int | 600 | Audio between caption passes: the stream's `partial_s` when `asr_streaming_config` leaves it unset. |
+| `speculative_whisper` | Boolean | `true` | Run a stream snapshot at the first VAD pause, when the stream calls one worthwhile. |
+| `asr_stream_per_turn` | Boolean? | `null` (= `true`) | One decoder stream per request; the request is one clean decode of the utterance. `false` keeps one running stream (its committed words lead every later request). |
+| `asr_streaming_config` | `ASRStreamingConfig` | model's tuning | Decoder streaming policy (`algorithm`, `partial_s`, `silence_hang_s`, …); every unset field is the loaded model's tuned value. |
+| `asr_generation` | `ASRGenerationConfig?` | `null` | Decoder generation; `null` = the model's default in `stt_language`. |
+| `turn_asr_silence_hangover_ms` | Int | 200 (= unset) | Trailing silence the decoder hears after speech stops, in both turn modes. Left at 200 it is the model's tuned `silence_hang_s`. |
 
-The ASR node runs **one unified path** with two decoupled consumers that
-share a **single serial inference chain** (the model is never entered
-concurrently):
+The agent's speech path is the same graph `ASREngine` runs
+(`ASRSpeechGraph`):
 
-- **Captions (cosmetic).** When `asr_streaming` is on, the node re-decodes
-  the growing turn buffer every `asr_partial_interval_ms` (a VAD pause
-  forces a pass early) and folds the result through **LocalAgreement-2**:
-  only the prefix two consecutive hypotheses agree on is surfaced, so
-  captions never flicker or retract. Committed text is published as
-  `user_request_partial`. These partials never feed the LLM.
-- **Authoritative.** At end-of-turn the node emits exactly one
-  `user_request` (source `speech`). It reuses the most recent full-buffer
-  decode (a caption or the speculative pass) when the buffer hasn't
-  drifted; otherwise it decodes the whole buffer fresh. This is the
-  **only** value that drives the LLM.
+```text
+mic -> normalize -> VAD -+- speech -> capture gate -+- speech -> ASR (ASRStream) -> request
+                         |                          `- frames -> turn node
+                         `- frames (ungated) -> interruption
+```
 
-Because the authoritative decode is always a single full-utterance pass,
-**both modes produce identical final text**; `asr_streaming` only decides
-whether live captions are emitted along the way. When `asr_streaming` is
-off, no caption passes run; the speculative pass (if `speculative_whisper`)
-still warms the final at the VAD pause, so perceived STT latency stays near
-**0 ms** in the steady state. The handoff is in-band: the turn node pushes
-speculate / end-of-turn markers on the same wire that carries voiced
-frames, so finalization stays in lock-step with the audio (no
-cross-channel race).
+- **VAD** is the one speech authority: onset, pre-roll and a short
+  hangover of trailing audio, every chunk stamped with its position.
+- **Capture gate** lets speech through only in `listening` /
+  `sleeping`, waits `aec_playback_gate_tail_ms` after the assistant
+  spoke, mutes itself at a turn end until the transcript is out, and
+  hands a barge-in's captured words to the next turn.
+- **Turn node** (`TSTurnNode` for `vad`, `TSDNNTurnNode` for `dnn`)
+  only decides that the turn ended and at which audio position.
+- **ASR** decodes the turn's audio on an `ASRStream` of the `stt`
+  model (`ASRPipeline`): live partials every `partial_s`, a snapshot
+  at the first pause. The turn end becomes a `TURN_END` control the
+  stream orders against its own audio, so the request never misses
+  the last words. With `asr_stream_per_turn` (default) the request is
+  one clean decode of the whole utterance, and the next turn starts on
+  a fresh stream. A custom `asr_agent` replaces the stream with one
+  `transcribe` per turn (no partials).
+
+Partials (`user_request_partial`) show the stream's committed words
+and its current hypothesis; they never feed the LLM. Each turn ends in
+exactly one `user_request` (source `speech`), the only text the LLM
+gets. A transcription-only agent (no LLM) re-opens capture after every
+request.
 
 ### Interruption / AEC
 
@@ -900,22 +915,19 @@ public snake_case `agent.events` in [Events](#events). Do not mix them:
 
 ## Latency
 
-The figures below use a remote OpenAI `gpt-4o-mini` LLM, so "first
-audio" (time between end-of-user-speech and the first sample reaching
-the speaker) is dominated by the network LLM time-to-first-token — the
-on-device Snapdragon pipeline adds a comparable ~100–200 ms on top.
+After the user stops speaking, the wait for the first audio is the
+end-of-turn decision, the LLM's first sentence and the first TTS
+audio. The agent overlaps them:
 
-| Turn | LLM 1st tok | First audio | Full speak |
-|------|------------:|------------:|-----------:|
-| Short reply | ~490 ms | **~520 ms** | ~3.3 s |
-| Long monologue | ~575 ms | **~600 ms** | **~53 s** |
-| Mid-length | ~1230 ms | **~1500 ms** | ~5.8 s |
+- The ASR stream decodes while the user speaks, so the request is
+  ready soon after the turn ends (`speculative_whisper` also takes a
+  snapshot at the first pause).
+- The LLM's text deltas go straight into the TTS streaming session,
+  which segments sentences itself: speech starts with the first
+  sentence instead of after the whole reply, and the LLM never waits
+  for a sentence boundary.
 
-The on-device pipeline (VAD + speculative Whisper + LLM-delta-streamed
-NeuTTS) adds only ~100–200 ms on top of the network round-trip. LLM
-deltas are plumbed straight into the TTS streaming session, so sentence
-segmentation and decoder context reuse happen inside TTS — the LLM node
-never has to wait for sentence boundaries.
+With a remote LLM, its time to first token usually dominates.
 
 ## Background Operation (Android)
 

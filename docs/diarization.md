@@ -32,7 +32,7 @@ val rows = TheStageAI.infer(
 ```
 
 Streaming uses the push contract from
-[streaming.md](./streaming.md#streaming-input-asr): open with
+[streaming.md](./streaming.md#streaming-input): open with
 `infer_stream`, push with `stream_append`, close with `stream_finish`.
 Chunks carry `segments`, and `kind` says what they are:
 
@@ -72,7 +72,7 @@ with the rest of your app.
 ```kotlin
 // Start the components first — each is an ordinary model.
 TheStageAI.start_model(model_name = "diar",  engines_path = "TheStageAI/Nemotron-3-Diarization")
-TheStageAI.start_model(model_name = "embed", engines_path = "TheStageAI/redimnet2")
+TheStageAI.start_model(model_name = "embed", engines_path = "TheStageAI/speaker-id-v2")
 TheStageAI.start_model(model_name = "vad",   engines_path = "TheStageAI/silero-vad")
 TheStageAI.start_model(model_name = "asr",   engines_path = "TheStageAI/thewhisper-large-v3-turbo")
 

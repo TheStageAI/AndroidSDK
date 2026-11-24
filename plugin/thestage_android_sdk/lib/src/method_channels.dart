@@ -22,6 +22,16 @@ class MethodChannels {
       'thestage_android_sdk/voice_agent_ports';
   static const String voiceAgentNodes =
       'thestage_android_sdk/voice_agent_nodes';
+  static const String asrEngineEvents =
+      'thestage_android_sdk/asr_engine_events';
+  static const String asrEngineTurns =
+      'thestage_android_sdk/asr_engine_turns';
+  static const String asrEngineTranscripts =
+      'thestage_android_sdk/asr_engine_transcripts';
+  static const String asrEnginePartials =
+      'thestage_android_sdk/asr_engine_partials';
+  static const String asrEngineVADProbabilities =
+      'thestage_android_sdk/asr_engine_vad_probabilities';
   static const String logs = 'thestage_android_sdk/logs';
 }
 
@@ -56,12 +66,13 @@ class MethodRoute {
   static const String infer = 'infer';
   static const String startStream = 'start_stream';
   static const String send = 'send';
+  static const String flush = 'flush';
   static const String finishStream = 'finish_stream';
   static const String stopStream = 'stop_stream';
 
-  // Push input INTO a live infer_stream session (ASR).
-  // Distinct from the four above, which drive the TTS
-  // text streamer.
+  // Push input INTO a live infer_stream session (Nemotron
+  // diarization / multispeaker). Distinct from the routes above,
+  // which drive push streams by stream_id.
   static const String streamAppend = 'stream_append';
   static const String streamFinish = 'stream_finish';
   static const String streamCancel = 'stream_cancel';
@@ -95,6 +106,9 @@ class MethodRoute {
   static const String voiceAgentSetSystemPrompt =
       'voice_agent.set_system_prompt';
 
+  static const String asrEngineStart = 'asr_engine.start';
+  static const String asrEngineStop = 'asr_engine.stop';
+
   static const String screenRecorderIsRecording =
       'screen_recorder.is_recording';
   static const String screenRecorderStart = 'screen_recorder.start';
@@ -104,4 +118,5 @@ class MethodRoute {
   static const String androidPrefetchModel = 'prefetch_model';
   static const String androidCheckModelAvailability =
       'check_model_availability';
+  static const String androidCancelStartModel = 'cancel_start_model';
 }

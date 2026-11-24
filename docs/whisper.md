@@ -3,21 +3,19 @@
 On-device speech recognition using Whisper (large-v3-turbo). The ASR
 pipeline handles mel-spectrogram, encoder and decoder, with automatic
 VAD chunking and long-audio stitching. The encoder and decoder run on
-the Hexagon NPU through TheStage's own NPU runtime: about 0.1 s of
-encoder time per 10 s window and about 2 ms per decoded token on a
-Snapdragon 8 Elite.
+the Hexagon NPU through TheStage's own NPU runtime.
 
-Flutter consumers go through the singleton `start_model` + `infer`
-JSON path — there is no direct pipeline constructor on Dart. Both
-surfaces share the same on-disk cache and response shape.
+Usage (batch `infer`, live captions, word timestamps, language
+detection, configuration) is on [asr.md](./asr.md). This page covers
+what is specific to the Whisper bundle.
 
 ## Basic Usage
 
-**Kotlin** — via the singleton (recommended; auto-downloads the bundle):
+**Kotlin**
 
 ```kotlin
-// build.gradle.kts: implementation(files("libs/TheStageCore.aar"))
 import ai.thestage.qlip.TheStageAI
+import ai.thestage.qlip.models.asr.ASRGenerationConfig
 
 // Inside a coroutine (initialize / start_model / infer are suspend).
 TheStageAI.registerContext(context)
@@ -28,38 +26,16 @@ TheStageAI.start_model(
     engines_path = "TheStageAI/thewhisper-large-v3-turbo"  // HF repo or local
 )
 
-// Transcribe audio (16 kHz mono FloatArray, see Audio I/O Contract).
-val json = TheStageAI.infer(
-    model_name = "stt",
-    input_json = mapOf("audio" to audio_samples, "language" to "en")
-)
-println(json[0]["transcription"])  // "Hello, how are you today?"
+// 16 kHz mono FloatArray, see the audio contract on asr.md.
+val result = TheStageAI.asr_engine(stt = "stt")
+    .infer(audio_samples, ASRGenerationConfig(language = "en"))
+println(result.text)
 ```
 
-The direct Kotlin classes (`WhisperModel` + `TheStageASRPipeline`) are
-also available for a local (already-downloaded) engines directory. They
-load from a local dir — they do not download, so `prefetch_model` first:
-
-```kotlin
-import ai.thestage.qlip.models.whisper.WhisperModel
-import ai.thestage.qlip.models.asr.TheStageASRPipeline
-
-val dir = TheStageAI.prefetch_model(
-    repo_id = "TheStageAI/thewhisper-large-v3-turbo"
-)
-
-val engine = WhisperModel(engines_path = dir, device = "npu")
-val stt    = TheStageASRPipeline.wrap(engine)
-
-val result = stt.infer(audio = audio_samples, language = "en")
-println(result.text)               // result.tokens_per_second, ...
-```
-
-**Flutter** — JSON path:
+**Flutter**
 
 ```dart
 import 'package:thestage_android_sdk/thestage_android_sdk.dart';
-import 'dart:typed_data';
 
 await TheStageFlutterSDK.initialize(api_token: 'your-api-token');
 
@@ -69,122 +45,63 @@ await TheStageFlutterSDK.start_model(
 );
 
 // audio_samples: Float32List, 16 kHz mono, samples in [-1.0, 1.0].
-final result = await TheStageFlutterSDK.infer(
-  model_name: 'stt',
-  input_json: {
-    'audio': audio_samples,
-    'language': 'en',
-  },
+final result = await ASREngine(stt: 'stt').infer(
+  audio_samples,
+  config: const ASRGenerationConfig(language: 'en'),
 );
-print(result[0]['transcription']);
+print(result.text);
 ```
 
-## Inputs / Outputs
+## JSON rows
 
-| Direction | Type | Description |
-|---|---|---|
-| input  `audio` | `FloatArray` | 16 kHz mono PCM, samples in `[-1.0, 1.0]`, any length. |
-| input  `language` | `String` (default `"en"`) | Whisper language code: `en`, `fr`, `de`, `es`, `pt`, `ja`, `ko`, `zh`, `ar`, `hi`, `ru`, … |
-| input  `max_new_tokens` | `Int?` | Cap per-window decode (`ASRConfig.max_new_tokens` on the direct pipeline). |
-| input  `ASRConfig.return_tokens` | `Boolean` (default `false`) | **Direct Kotlin API only** — include token IDs in `ASRResult.tokens`. Not honored on the singleton / JSON path. |
-| output `ASRResult.text` | `String` | Transcribed text. |
-| output `ASRResult.token_count` | `Int` | Total decoded tokens (sum across windows). |
-| output `ASRResult.decode_seconds` | `Double` | Decoder wall time. |
-| output `ASRResult.tokens` | `IntArray?` | Token IDs (only if `return_tokens == true`). |
+`TheStageAI.infer` / `TheStageFlutterSDK.infer` on a Whisper model take
+`audio` plus the `ASRGenerationConfig` keys (`language`, `timestamps`,
+`max_new_tokens`, `return_tokens`, `text_context`, `context_text`,
+`language_detection`, `overlap`; see [asr.md](./asr.md#transcribe-audio)).
+A payload without `timestamps` gets `WORD`. With `vad_model_name` (a
+started Silero VAD) the Flutter call runs through `ASREngine(stt, vad)`.
 
-> The output rows above (`token_count`, `decode_seconds`, `tokens`) and
-> `return_tokens` are the **direct Kotlin `TheStageASRPipeline` /
-> `ASRResult`** surface. The singleton / JSON path returns a different
-> key set — see [Singleton API](#singleton-api-thestageai) below.
+The single row carries the `ASRResult` keys of
+[asr.md](./asr.md#result-object) (`transcription`, `text`, `words`,
+`language`, `timestamp_mode`, `token_count`, `generated_tokens`,
+`decode_seconds`, `tokens`, `metrics`) plus `language_code`,
+`mel_seconds`, `encoder_seconds`, `total_seconds` and
+`tokens_per_second`.
 
-## Audio I/O
+## Windows and VAD
 
-- 16 kHz mono `FloatArray`, samples normalized to `[-1.0, 1.0]`.
-- Long buffers are split internally into the bundle's transcription
-  windows: **10 s** for the shipped bundle (set in its
-  `encoder_spec.json`).
-- Overlap between windows is configurable via the `overlap_seconds`
-  constructor argument (default `0`). Useful on streaming captures to
-  avoid losing words straddling a chunk boundary.
-- Mismatched-rate input is **not** auto-resampled — convert your mic
-  capture to 16 kHz mono Float before calling `infer`.
+- Long audio is cut into the bundle's windows: **10 s** for the shipped
+  bundle (`encoder_spec.json`), with `overlap` (default `0.2`) reused
+  by the next window.
+- When the bundle ships a `vad` sub-engine, `infer` on the model moves
+  window cuts into confirmed silence and skips windows without speech,
+  as `ASREngine` does with a VAD.
+- Mismatched-rate input is **not** resampled: convert to 16 kHz mono
+  float first.
 
-See [Audio I/O Contract](./README.md#audio-io-contract) for the
-shared format used across VAD / ASR / TTS.
+## Direct pipeline
 
-## Streaming (live transcription)
-
-Push mic audio in as it arrives and read stable, monotonically-growing
-partials back: the SDK re-decodes the growing buffer on a single
-serial worker and commits stable text via LocalAgreement, so captions
-never flicker or retract, and the final transcript always covers the
-complete utterance.
-
-- **Kotlin** — `TheStageAI.open_asr_streamer(model_name = "stt")`:
-  `send(audio)`, collect `partials`, then `finish()` for the final
-  transcript (or `cancel()`).
-- **Kotlin and Flutter** — `infer_stream` on the model, then push
-  audio with `stream_append` and end the turn with `stream_finish`
-  (or `stream_cancel`).
-- **Voice agent** — runs the same streaming ASR inside the full
-  assistant loop ([voice_agent.md](./voice_agent.md)).
-
-See [Streaming → Streaming input (ASR)](./streaming.md#streaming-input-asr)
-for both APIs with examples.
-
-## Internal VAD Chunking
-
-The Whisper pipeline includes a Silero-VAD pre-pass that finds speech
-segments before transcribing — this is the "automatic VAD chunking"
-referenced above. It is active whenever the bundle ships a `vad`
-sub-engine; a bundle without one falls back to fixed-length window
-chunking. The pre-pass is driven purely by bundle contents.
-
-## Singleton API (`TheStageAI`)
-
-`TheStageAI` is a Kotlin `object` (singleton); its methods are
-`suspend`.
+`WhisperPipeline` wraps a loaded `WhisperModel` from a local
+(already-downloaded) engines directory; `TheStageAI.asr_pipeline(
+model_name)` returns the one of a started model.
 
 ```kotlin
-TheStageAI.start_model(
-    model_name = "stt",                            // any handle you choose
-    engines_path = "TheStageAI/thewhisper-large-v3-turbo"
+import ai.thestage.qlip.models.asr.ASREngine
+import ai.thestage.qlip.models.asr.whisper.WhisperPipeline
+import ai.thestage.qlip.models.whisper.WhisperModel
+
+val dir = TheStageAI.prefetch_model(
+    repo_id = "TheStageAI/thewhisper-large-v3-turbo"
 )
-
-val json = TheStageAI.infer(
-    model_name = "stt",
-    input_json = mapOf(
-        "audio" to audio_samples,   // FloatArray, 16 kHz mono
-        "language" to "en"          // optional, default "en"
-    )
-)
-val text = json[0]["transcription"] as String
-```
-
-JSON response keys: `transcription` (`String`), `mel_seconds`
-(`Double`), `encoder_seconds` (`Double`), `total_seconds` (`Double`),
-`tokens_per_second` (`Double`), `generated_tokens` (`Int`).
-
-The Flutter `TheStageFlutterSDK.infer` call hits this exact JSON path,
-so the response keys above apply unchanged on Dart. `audio` crosses
-the platform channel as `Float32List`; do not promote to `Float64List`.
-
-## Full Constructor
-
-```kotlin
-val engine = WhisperModel(
-    engines_path = dir,                  // local (prefetched) dir
-    device = "npu",                      // "npu" | "cpu"
-    overlap_seconds = 0.0                // chunk overlap for long audio
-)
-val stt = TheStageASRPipeline.wrap(engine)
+val engine = WhisperModel(engines_path = dir, device = "npu")
+val stt = ASREngine(WhisperPipeline(engine))
 ```
 
 Placement comes from the bundle: the mel front-end runs on the CPU and
 the encoder and decoder on the NPU. `device` and the singleton's
 per-module `devices` overrides are accepted for call-site
 compatibility; the shipped bundle's NPU passes ignore them.
-`TheStageAI.initialize(...)` must have succeeded before either call.
+`TheStageAI.initialize(...)` must have succeeded first.
 
 ## Load Progress
 
@@ -243,6 +160,7 @@ val engines_dir = TheStageAI.prefetch_model(
 
 // Later — instant load, no network:
 val engine = WhisperModel(engines_path = engines_dir)
+val stt = ASREngine(WhisperPipeline(engine))
 ```
 
 ## Cleanup

@@ -16,7 +16,6 @@ Models product terms — page `android-sdk-product-terms` on
 | Access | Requires an API Token; initialize before use |
 | Seats | `(apiToken, deviceId)` — see [licensing.md](./licensing.md) |
 | Delivery | Engine bundles download from Hugging Face or ship as Google Play AI packs — see [ai_packs.md](./ai_packs.md) |
-| Third-party runtime | Certain Qualcomm QAIRT runtime libraries are obtained from Qualcomm under Qualcomm's terms |
 | **Pricing** | **By arrangement** — open a **Service Request** at [app.thestage.ai/contact](https://app.thestage.ai/contact). No public rate card. |
 | Redistribution | Governed by the Product Terms + master agreement; see shipped `LICENSE` |
 

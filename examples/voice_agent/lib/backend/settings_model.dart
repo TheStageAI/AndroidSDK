@@ -109,6 +109,12 @@ Never invent facts. Never name a place, time, or number the user did not ask and
   String llmEndpoint = 'https://api.openai.com/v1/chat/completions';
   // The reply's token cap, for both providers.
   int maxTokens = 256;
+  // On-device only: the LLM's context in tokens (a model opens with at
+  // most its own largest: 32768 for LFM2.5 and LFM3, 8192 for Qwen3.5)
+  // and how many recent user + assistant turns go to it. Memory grows
+  // with the conversation, not with the context.
+  int llmContext = 32768;
+  int memoryTurns = 50;
   // Cloud only: the on-device models decode greedily and ignore it.
   double temperature = 0.7;
 
@@ -254,6 +260,8 @@ Never invent facts. Never name a place, time, or number the user did not ask and
         'system_prompt': systemPrompt,
         'llm_tools': llmTools,
         'max_tokens': maxTokens,
+        if (llmProvider == 'local') 'llm_n_ctx': llmContext,
+        'memory_turns': memoryTurns,
 
         // ── VAD / endpointing ──
         'vad_threshold': vadThreshold,

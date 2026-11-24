@@ -1,6 +1,7 @@
 package ai.thestage.thestage_android_sdk.streams
 
 import ai.thestage.qlip.voice_agent.InterruptTrigger
+import ai.thestage.qlip.voice_agent.SlidingWindowMemory
 import ai.thestage.qlip.voice_agent.TheStageAgentCapabilities
 import ai.thestage.qlip.voice_agent.TheStageAgentConfig
 import ai.thestage.qlip.voice_agent.TheStageVoiceAgent
@@ -412,6 +413,17 @@ class VoiceAgentStateStream(
         // this SoC (the SDK default); "npu" / "cpu" constrain it.
         (dict["llm_device"] as? String)?.let {
             config = config.copy(llm_device = it)
+        }
+        // The local LLM's context (0 / absent: the bundle's), and the
+        // history window: the last `memory_turns` user + assistant
+        // turn pairs go to the LLM (Kotlin: `chat_memory`).
+        __as_int(dict["llm_n_ctx"])?.let {
+            config = config.copy(llm_n_ctx = it)
+        }
+        __as_int(dict["memory_turns"])?.takeIf { it > 0 }?.let {
+            config = config.copy(
+                chat_memory = SlidingWindowMemory(max_turns = it)
+            )
         }
 
         // VAD / endpointing extras.

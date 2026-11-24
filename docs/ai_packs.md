@@ -78,15 +78,13 @@ Decision matrix per model:
 
 ## 3. Get the model files
 
-For each model you license, TheStage provides the same per-SoC
-bundles that back the HF path:
+For each model you license, TheStage provides the same bundles
+that back the HF path:
 
 ```
-engines_qualcomm_sm8550.zip   (Snapdragon 8 Gen 2)
-engines_qualcomm_sm8650.zip   (Snapdragon 8 Gen 3)
-engines_qualcomm_sm8750.zip   (Snapdragon 8 Elite)
-engines_qualcomm_sm8850.zip   (Snapdragon 8 Elite Gen 5)
-engines_cpu.zip               (fallback, if available)
+engines_npu.zip   (one NPU build for Snapdragon 8 Gen 2, 8 Gen 3,
+                   8 Elite and 8 Elite Gen 5)
+engines_cpu.zip   (portable CPU build, if the model has one)
 ```
 
 Each release comes with a **release tag** (e.g. `whisper-0.2.3`).
@@ -110,13 +108,10 @@ your-app/
         └── thestageai_models_whisper#group_other/engines.zip
 ```
 
-Drop each per-SoC zip into its
-`<packName>#group_<soc>/` directory under the name `engines.zip`.
-
-Some models publish **one** bundle that serves several SoCs
-instead of one per chip; TheStage then provides that single zip
-with the list of SoCs it serves. Create a group for every SoC in
-that list and put the **same** `engines.zip` in each. A group is a Play
+Put the **same** NPU zip into every `<packName>#group_<soc>/`
+directory under the name `engines.zip`, and the CPU zip into
+`group_other` when the model has one (otherwise leave that group
+out; those devices take the fallback path). A group is a Play
 routing destination, not a distinct build, so repeating one bundle
 across groups is expected — it is how Play is told that those
 devices all take it.

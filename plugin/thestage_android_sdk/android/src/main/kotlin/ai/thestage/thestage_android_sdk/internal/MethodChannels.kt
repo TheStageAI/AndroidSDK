@@ -27,6 +27,16 @@ internal object MethodChannels {
         "thestage_android_sdk/voice_agent_ports"
     const val VOICE_AGENT_NODES =
         "thestage_android_sdk/voice_agent_nodes"
+    const val ASR_ENGINE_EVENTS =
+        "thestage_android_sdk/asr_engine_events"
+    const val ASR_ENGINE_TURNS =
+        "thestage_android_sdk/asr_engine_turns"
+    const val ASR_ENGINE_TRANSCRIPTS =
+        "thestage_android_sdk/asr_engine_transcripts"
+    const val ASR_ENGINE_PARTIALS =
+        "thestage_android_sdk/asr_engine_partials"
+    const val ASR_ENGINE_VAD_PROBABILITIES =
+        "thestage_android_sdk/asr_engine_vad_probabilities"
     const val LOGS = "thestage_android_sdk/logs"
 }
 
@@ -41,9 +51,7 @@ internal object MethodChannels {
  *
  * The `ANDROID_*` block at the bottom are Android-only
  * routes with no iOS equivalent (prefetch, NeuTTS-chained
- * toggle, model-availability check). They are preserved
- * from the original `thestage_android_sdk` plugin so Android apps keep
- * working.
+ * toggle, model-availability check).
  */
 internal object MethodRoute {
     const val INITIALIZE = "initialize"
@@ -71,12 +79,13 @@ internal object MethodRoute {
     const val INFER = "infer"
     const val START_STREAM = "start_stream"
     const val SEND = "send"
+    const val FLUSH = "flush"
     const val FINISH_STREAM = "finish_stream"
     const val STOP_STREAM = "stop_stream"
 
-    // Push input INTO a live infer_stream session (ASR).
-    // Distinct from the four above, which drive the TTS
-    // text streamer.
+    // Push input INTO a live infer_stream session (Nemotron
+    // diarization / multispeaker). Distinct from the routes
+    // above, which drive push streams by stream_id.
     const val STREAM_APPEND = "stream_append"
     const val STREAM_FINISH = "stream_finish"
     const val STREAM_CANCEL = "stream_cancel"
@@ -110,15 +119,17 @@ internal object MethodRoute {
     const val VOICE_AGENT_SET_SYSTEM_PROMPT =
         "voice_agent.set_system_prompt"
 
+    const val ASR_ENGINE_START = "asr_engine.start"
+    const val ASR_ENGINE_STOP = "asr_engine.stop"
+
     const val SCREEN_RECORDER_IS_RECORDING =
         "screen_recorder.is_recording"
     const val SCREEN_RECORDER_START = "screen_recorder.start"
     const val SCREEN_RECORDER_STOP = "screen_recorder.stop"
 
-    // Android-only routes (no iOS equivalent). Preserved
-    // from the original thestage_android_sdk plugin, snake_cased.
+    // Android-only routes (no iOS equivalent).
     const val ANDROID_PREFETCH_MODEL = "prefetch_model"
     const val ANDROID_CHECK_MODEL_AVAILABILITY =
         "check_model_availability"
-    // Live LLM HTP perf policy, no model reload (Genie only).
+    const val ANDROID_CANCEL_START_MODEL = "cancel_start_model"
 }

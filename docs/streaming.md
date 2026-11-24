@@ -216,35 +216,9 @@ await player.stop();
 
 ## Streaming ASR (Speech-to-Text)
 
-The inverse direction — push microphone audio in, read transcripts out
-— is available on Android through the **Voice Agent**
-([voice_agent.md](./voice_agent.md)), which runs streaming ASR
-internally. Its ASR node re-decodes the growing turn buffer on a single
-serial worker and commits stable text via LocalAgreement, so partials
-grow monotonically and never flicker, while the authoritative
-end-of-turn transcript always covers the complete utterance (including
-the last word).
-
-For a standalone, reusable streamer outside the voice agent, open one on
-a loaded Whisper model from Kotlin (mirrors `open_tts_streamer`):
-
-```kotlin
-val asr = TheStageAI.open_asr_streamer(
-    model_name = "stt", language = "en",
-)
-scope.launch { asr.partials.collect { caption -> /* live text */ } }
-for (chunk in micStream) asr.send(chunk)   // 16 kHz mono FloatArray
-val finalText = asr.finish()               // authoritative transcript
-```
-
-It re-decodes the growing buffer on a single serial worker and commits
-stable text via the same LocalAgreement-2 as the voice agent, so
-`partials` grow monotonically. `open_asr_streamer` is a native-Kotlin
-API; from Flutter, use the `stream_append` / `stream_finish` calls (see
-[Streaming input (ASR)](#streaming-input-asr) below), drive
-`TSVoiceAgent` for live speech-to-text, or use the batch `infer` for
-one-shot transcription (see [whisper.md](./whisper.md)). Convert mic
-input to 16 kHz mono Float first — it is **not** resampled.
+Live speech-to-text (push audio in, read committed and hypothesis
+text out) is `ASRStream` and `TSASREngine` / `ASREngine(config)`; see
+[asr.md → Live captions](./asr.md#live-captions).
 
 ---
 
@@ -444,81 +418,34 @@ startup ramp off.
 
 ---
 
-## Streaming input (ASR)
+## Streaming input
 
 TTS and LLM streaming take their whole input up front and stream
-results **out**. ASR is the other direction: the session opens first
-and audio is pushed **in** while partial transcripts come back.
-
-Three calls drive it, alongside `infer_stream`:
+results **out**. Nemotron diarization and `nemotron-multispeaker` take
+audio **in** after the session opens, through three calls alongside
+`infer_stream`:
 
 | Call | Purpose |
 |---|---|
 | `stream_append` | push the next slice of audio |
-| `stream_finish` | end the turn; the final transcript arrives as the terminal chunk |
-| `stream_cancel` | abandon the turn with no result |
+| `stream_finish` | end the session; the final chunk follows |
+| `stream_cancel` | abandon the session with no result |
 
-Open the stream, then push. Partials are the committed-so-far
-transcript and only ever grow — a stable prefix is never retracted,
-so they are safe to render directly as live captions.
-
-**Kotlin:**
-
-```kotlin
-val job = launch {
-    TheStageAI.infer_stream(
-        model_name = "asr",
-        input_json = mapOf("language" to "en"),
-    ).collect { chunk ->
-        if (chunk.is_final) println("final: ${chunk.delta}")
-        else println("partial: ${chunk.delta}")
-    }
-}
-
-// Push 16 kHz mono audio in [-1, 1], any slice size.
-TheStageAI.stream_append(
-    model_name = "asr",
-    input_json = mapOf("audio" to samples.map { it.toDouble() }),
-)
-
-TheStageAI.stream_finish(model_name = "asr")   // flow completes
-job.join()
-```
-
-**Flutter:**
-
-```dart
-final stream = TheStageFlutterSDK.infer_stream(
-  model_name: 'asr',
-  input_json: {'language': 'en'},
-);
-stream.listen((chunk) {
-  if (chunk['is_final'] == true) print('final: ${chunk['delta']}');
-  else print('partial: ${chunk['delta']}');
-});
-
-await TheStageFlutterSDK.stream_append(
-  model_name: 'asr',
-  input_json: {'audio': samples},   // List<double>, 16 kHz mono
-);
-
-await TheStageFlutterSDK.stream_finish(model_name: 'asr');
-```
+The chunk format of each model is on its page
+([diarization.md](./diarization.md)). Live ASR uses its own session
+type instead: [asr.md](./asr.md#you-push-the-audio).
 
 Notes:
 
 - The flow completes when `stream_finish` resolves or `stream_cancel`
-  is called — not before. The terminal chunk carries the authoritative
-  transcript, which may differ from the last partial.
+  is called.
 - Appends are serialized against inference on the model's own thread,
   so pushing while a pass is running is safe. An append also knows
   whether newer audio is already queued behind it, so optional
   per-append work is skipped rather than done and immediately
   superseded.
-- Models that take their whole input up front — NeuTTS, LFM2.5-VL —
-  reject these three calls.
-- After a cancel the model stays usable; the next `infer_stream` or
-  `infer` works normally.
+- Models that take their whole input up front reject these three
+  calls.
 
 ### Reusing a bundle across models
 

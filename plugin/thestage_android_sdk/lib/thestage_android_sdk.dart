@@ -5,4 +5,7 @@ export 'src/agent_node.dart';
 export 'src/tts_controller.dart';
 export 'src/nemotron.dart';
 export 'src/screen_recorder.dart';
+export 'src/asr_engine.dart';
+export 'src/asr_stream.dart';
+export 'src/ts_asr_engine.dart';
 export 'src/ts_compat_aliases.dart';

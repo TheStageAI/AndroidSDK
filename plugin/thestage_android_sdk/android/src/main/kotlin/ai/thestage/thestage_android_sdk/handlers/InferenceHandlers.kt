@@ -2,7 +2,11 @@ package ai.thestage.thestage_android_sdk.handlers
 
 import ai.thestage.qlip.TheStageAI
 import ai.thestage.qlip.TypesConverter
+import ai.thestage.qlip.models.asr.ASREngine
+import ai.thestage.qlip.models.asr.ASRGenerationConfig
+import ai.thestage.qlip.models.asr.ASRModelAPI
 import ai.thestage.thestage_android_sdk.TheStageFlutterPlugin
+import ai.thestage.thestage_android_sdk.internal.ASRJson
 import ai.thestage.thestage_android_sdk.internal.__fail
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -32,8 +36,29 @@ internal fun TheStageFlutterPlugin.__handle_infer(
     val input_json = (args["input_json"] as? Map<String, Any?>)
         ?: args.mapValues { it.value }
 
+    // `vad_model_name` with audio: the clip goes through
+    // ASREngine(stt, vad), whose VAD moves window cuts into pauses
+    // and skips windows without speech.
+    val vad_name = (input_json["vad_model_name"] as? String)
+        ?.takeIf { it.isNotEmpty() }
+    val audio = input_json["audio"] ?: input_json["pcm"]
+
     __scope.launch(Dispatchers.Default) {
         try {
+            if (vad_name != null && audio != null) {
+                val pcm = ASRModelAPI.pcm(audio)
+                val generation = ASRGenerationConfig.from_payload(
+                    payload = input_json,
+                    default_language = "en",
+                )
+                val asr = ASREngine(stt = model_name, vad = vad_name)
+                    .infer(pcm, generation)
+                val packed = listOf(ASRJson.result(asr))
+                withContext(Dispatchers.Main) {
+                    result.success(packed)
+                }
+                return@launch
+            }
             val response = TheStageAI.infer(
                 model_name = model_name,
                 input_json = input_json,
@@ -73,11 +98,21 @@ internal fun TheStageFlutterPlugin.__handle_start_stream(
 
     val sink_status =
         if (handler.has_sink) "sink_SET" else "sink_NIL"
-    handler.start(
-        stream_id = stream_id,
-        model_name = model_name,
-        input_json = input_json,
-    )
+    // `kind: 'asr'` (Dart `ASRStream.open`): a push ASR session
+    // fed by `send {pcm}`; everything else is the generic path.
+    if ((args["kind"] as? String)?.lowercase() == "asr") {
+        __asr_handler?.start(
+            stream_id = stream_id,
+            model_name = model_name,
+            input_json = input_json,
+        )
+    } else {
+        handler.start(
+            stream_id = stream_id,
+            model_name = model_name,
+            input_json = input_json,
+        )
+    }
     result.success(mapOf("sink_status" to sink_status))
 }
 
@@ -87,12 +122,43 @@ internal fun TheStageFlutterPlugin.__handle_send_stream(
 ) {
     val args = call.arguments as? Map<*, *>
     val stream_id = args?.get("stream_id") as? String
-    val text = args?.get("text") as? String
-    if (stream_id == null || text == null) {
-        __fail(result, "Missing stream_id or text.")
+    if (stream_id == null) {
+        __fail(result, "Missing stream_id.")
         return
     }
-    __stream_handler?.send(stream_id = stream_id, text = text)
+    val pcm = args["pcm"]
+    val text = args["text"] as? String
+    when {
+        pcm != null -> {
+            val samples = try {
+                ASRModelAPI.pcm(pcm)
+            } catch (e: Exception) {
+                __fail(result, "Unsupported pcm payload.")
+                return
+            }
+            __asr_handler?.send(stream_id = stream_id, pcm = samples)
+        }
+        text != null ->
+            __stream_handler?.send(stream_id = stream_id, text = text)
+        else -> {
+            __fail(result, "Missing stream_id payload (text or pcm).")
+            return
+        }
+    }
+    result.success(null)
+}
+
+internal fun TheStageFlutterPlugin.__handle_flush_stream(
+    call: MethodCall,
+    result: MethodChannel.Result,
+) {
+    val args = call.arguments as? Map<*, *>
+    val stream_id = args?.get("stream_id") as? String
+    if (stream_id == null) {
+        __fail(result, "Missing stream_id.")
+        return
+    }
+    __asr_handler?.flush(stream_id = stream_id)
     result.success(null)
 }
 
@@ -104,6 +170,20 @@ internal fun TheStageFlutterPlugin.__handle_finish_stream(
     val stream_id = args?.get("stream_id") as? String
     if (stream_id == null) {
         __fail(result, "Missing stream_id.")
+        return
+    }
+    val asr = __asr_handler
+    if (asr != null && asr.has(stream_id)) {
+        // Replies with the session's final ASRResult.
+        __scope.launch(Dispatchers.Default) {
+            val payload = try {
+                ASRJson.result(asr.close(stream_id))
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { __fail(result, e) }
+                return@launch
+            }
+            withContext(Dispatchers.Main) { result.success(payload) }
+        }
         return
     }
     __stream_handler?.finish_stream(stream_id = stream_id)
@@ -120,7 +200,12 @@ internal fun TheStageFlutterPlugin.__handle_stop_stream(
         __fail(result, "Missing stream_id.")
         return
     }
-    __stream_handler?.cancel(stream_id = stream_id)
+    val asr = __asr_handler
+    if (asr != null && asr.has(stream_id)) {
+        asr.cancel(stream_id = stream_id)
+    } else {
+        __stream_handler?.cancel(stream_id = stream_id)
+    }
     result.success(null)
 }
 
@@ -133,8 +218,9 @@ internal fun TheStageFlutterPlugin.__handle_stop_stream(
  * [TheStageAI] call on the model's own executor.
  *
  * Only models whose streaming path accepts input after the
- * stream opens support these — ASR today; everything else
- * answers with an error the Dart side surfaces as-is.
+ * stream opens support these — Nemotron diarization and
+ * `nemotron-multispeaker`; everything else answers with an
+ * error the Dart side surfaces as-is.
  */
 @Suppress("UNCHECKED_CAST")
 private fun TheStageFlutterPlugin.__handle_stream_input(

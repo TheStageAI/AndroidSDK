@@ -107,7 +107,10 @@ state change repaints the relevant bubbles.
 
 - **LLM** — `llm_provider` / `llm_model` / `llm` (the on-device engines) /
   `llm_endpoint` / `llm_api_key` / `system_prompt` / `max_tokens` /
-  `temperature`. The default provider is `local`: the on-device
+  `temperature` / `llm_n_ctx` / `memory_turns`. The on-device LLM
+  opens with a 32768-token context (`llm_n_ctx`; a model opens with at
+  most its own largest) and the agent sends it the last 50 turns
+  (`memory_turns`). The default provider is `local`: the on-device
   `TheStageAI/LFM2.5-350M` (others in the picker), run with thinking off.
 - **ASR** — `stt` (Whisper), `stt_language`, `asr_streaming` (live captions),
   plus the `turn_*` keys for neural (smart-turn) end-of-turn detection.

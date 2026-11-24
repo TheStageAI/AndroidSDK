@@ -202,10 +202,11 @@ into the input buffer). From Kotlin you can also call
 `SileroVAD.extract_segments(...)` directly for a `List<SpeechSegment>`.
 
 For a streaming, turn-level speech gate (onset/offset frames, pre-roll,
-max accumulation, speculative ASR) use `TheStageVoiceAgent` instead —
-its VAD node does live endpointing. The Whisper pipeline
-(`TheStageASRPipeline`) also runs an internal Silero pre-pass before
-transcribing.
+max accumulation, speculative ASR) use `TheStageVoiceAgent` or the ASR
+engine's microphone mode ([asr.md](./asr.md#live-captions)) instead —
+their VAD does live endpointing. `ASREngine` with a VAD
+(`ASREngine(stt, vad)`) uses it to place window cuts in pauses and skip
+silent windows before transcribing.
 
 ## Cleanup
 

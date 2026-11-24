@@ -13,7 +13,8 @@ import '../widgets/bench_widgets.dart';
 // ----------------------------------------------------------------------
 // AsrTab — Whisper turbo record-and-transcribe + benchmark
 // ----------------------------------------------------------------------
-// Record a clip and transcribe it with Whisper large-v3 turbo. There is
+// Record a clip and transcribe it with Whisper large-v3 turbo
+// (`ASREngine.infer`). There is
 // no bundled fixture, so Benchmark replays the LAST recorded clip
 // warmup + N times and records the medians (rtfx / decode tok/s /
 // encoder ms).
@@ -177,20 +178,11 @@ class _AsrTabState extends State<AsrTab> {
     try {
       await _ensureModel();
       setState(() => _status = 'transcribing...');
-      final out = await TheStageFlutterSDK.infer(
-        model_name: _modelName,
-        input_json: {
-          'audio': audio,
-          'language': 'en',
-          'max_new_tokens': 128,
-        },
-      );
-      final first = out.isNotEmpty ? out.first : const <String, dynamic>{};
-      final m = _metricsFrom(first, audio.length / _sampleRate);
+      final result = await _transcribe(audio);
+      final m = _metricsFrom(result, audio.length / _sampleRate);
       setState(() {
-        _transcript = (first['transcription'] as String?)?.trim().isNotEmpty ==
-                true
-            ? (first['transcription'] as String).trim()
+        _transcript = result.text.trim().isNotEmpty
+            ? result.text.trim()
             : '(no speech)';
         _statsLine = _fmtMetrics(m);
         _status = 'done';
@@ -205,13 +197,17 @@ class _AsrTabState extends State<AsrTab> {
   // --------------------------------------------------------------------
   // Benchmark (replay last clip)
   // --------------------------------------------------------------------
-  Map<String, double> _metricsFrom(
-    Map<String, dynamic> r,
-    double audioSeconds,
-  ) {
-    final total = (r['total_seconds'] as num?)?.toDouble() ?? 0;
-    final enc = (r['encoder_seconds'] as num?)?.toDouble() ?? 0;
-    final tps = (r['tokens_per_second'] as num?)?.toDouble() ?? 0;
+  Future<ASRResult> _transcribe(List<double> audio) {
+    return ASREngine(stt: _modelName).infer(
+      Float32List.fromList(audio),
+      config: const ASRGenerationConfig(language: 'en', max_new_tokens: 128),
+    );
+  }
+
+  Map<String, double> _metricsFrom(ASRResult r, double audioSeconds) {
+    final total = r.metrics.total_seconds;
+    final enc = r.metrics.encode_seconds;
+    final tps = r.metrics.tokens_per_second;
     final rtfx = total > 0 ? audioSeconds / total : 0.0;
     return {
       'rtfx': rtfx,
@@ -243,26 +239,13 @@ class _AsrTabState extends State<AsrTab> {
     try {
       await _ensureModel();
       setState(() => _status = 'warmup...');
-      await TheStageFlutterSDK.infer(
-        model_name: _modelName,
-        input_json: {'audio': audio, 'language': 'en', 'max_new_tokens': 128},
-      );
+      await _transcribe(audio);
       final rtfx = <double>[];
       final tokS = <double>[];
       final enc = <double>[];
       for (var k = 0; k < n; k++) {
         setState(() => _status = 'run ${k + 1}/$n...');
-        final out = await TheStageFlutterSDK.infer(
-          model_name: _modelName,
-          input_json: {
-            'audio': audio,
-            'language': 'en',
-            'max_new_tokens': 128,
-          },
-        );
-        final first =
-            out.isNotEmpty ? out.first : const <String, dynamic>{};
-        final m = _metricsFrom(first, audioSeconds);
+        final m = _metricsFrom(await _transcribe(audio), audioSeconds);
         rtfx.add(m['rtfx']!);
         tokS.add(m['tok_s']!);
         enc.add(m['encode_ms']!);

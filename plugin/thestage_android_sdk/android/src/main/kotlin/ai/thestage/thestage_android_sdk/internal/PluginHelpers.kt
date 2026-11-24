@@ -71,8 +71,8 @@ internal fun __encode_status(
 // ----------------------------------------------------------------------
 /**
  * Serialize an [InferenceStreamChunk] to the map shape
- * expected by Dart's `infer_stream`. Mirrors `__make_event`
- * in iOS `QlipSdkPlugin.startGeneration`.
+ * expected by Dart's `infer_stream`, the same event shape
+ * the iOS plugin sends.
  */
 internal fun __chunk_to_event(
     stream_id: String,
@@ -143,8 +143,7 @@ internal fun __chunk_to_event(
 // ----------------------------------------------------------------------
 /**
  * Map an exception onto a Flutter [MethodChannel.Result]
- * error. Mirrors the original `thestage_android_sdk` plugin's
- * `__finish_error`: forward the SDK's pre-recorded symbolic
+ * error: forward the SDK's pre-recorded symbolic
  * code (INPUT_TOO_LONG / SENTENCE_TOO_LONG / ...) as the
  * PlatformException code so apps branch UI without
  * importing internal exception types.

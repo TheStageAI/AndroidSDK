@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
  * it arrives; a terminal `is_final` chunk closes the stream.
  * This is the path for local LLM, VLM, and one-shot TTS
  * alike — the model is decided by the SDK, not by the shape
- * of the input. Mirrors iOS `QlipSdkPlugin.startGeneration`,
+ * of the input. Mirrors the iOS plugin's stream start,
  * which unconditionally calls `infer_stream(model_name,
  * input_json)`.
  *
@@ -87,6 +87,9 @@ class InferStreamHandler(
     // Public Methods
     // ------------------------------------------------------------------
     val has_sink: Boolean get() = __event_sink != null
+
+    /** The channel's sink; push ASR sessions share it. */
+    val sink: EventChannel.EventSink? get() = __event_sink
 
     /**
      * Begin a stream. One-shot generic inference by default —

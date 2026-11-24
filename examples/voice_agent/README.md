@@ -12,7 +12,9 @@ and TTS streaming back through NeuTTS (`neutts-nano-multilingual`).
 - The on-device LLM (`llm_provider: local`, run with thinking off), or a
   cloud provider (OpenAI-compatible) reached over HTTPS — pick it in
   Settings, or change the LLM fields in
-  `lib/backend/settings_model.dart`.
+  `lib/backend/settings_model.dart`. The on-device LLM opens with a
+  32768-token context and hears the last 50 turns (`llm_n_ctx`,
+  `memory_turns`).
 - Tool calling: the on-device LLM calls tools mid-reply (`llm_tools`,
   default `voice`: weather, local time, web search, Wikipedia, a
   calculator and phone actions; `web` keeps only weather, time and
